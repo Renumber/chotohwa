@@ -1,0 +1,45 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-primary-50: #f0fdf4;
+  --color-primary-100: #dcfce7;
+  --color-primary-500: #22c55e;
+  --color-primary-600: #16a34a;
+  --color-primary-700: #15803d;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-gray-200 text-gray-900 antialiased;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* 데스크탑: 좌우 여백(gray-200) + 중앙 앱 프레임(gray-100) */
+.app-shell {
+  @apply min-h-screen bg-gray-200;
+}
+
+.app-frame {
+  @apply relative mx-auto min-h-screen w-full max-w-lg bg-gray-100;
+}
+
+@media (min-width: 1024px) {
+  .app-frame {
+    box-shadow:
+      0 0 0 1px rgb(209 213 219 / 0.7),
+      0 25px 50px -12px rgb(0 0 0 / 0.15);
+  }
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+}
