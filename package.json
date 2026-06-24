@@ -24,6 +24,7 @@
     "@vue/tsconfig": "^0.7.0",
     "tailwindcss": "^4.1.4",
     "typescript": "~5.8.3",
+    "@types/node": "^22.15.21",
     "vite": "^6.3.2",
     "vite-plugin-pwa": "^0.21.2",
     "vue-tsc": "^2.2.8"
