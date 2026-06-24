@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated } from 'vue'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, subMonths, addMonths } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import AppHeader from '@/components/layout/AppHeader.vue'
@@ -7,19 +7,22 @@ import WorkoutCard from '@/components/workout/WorkoutCard.vue'
 import CardioForm from '@/components/cardio/CardioForm.vue'
 import MealForm from '@/components/meal/MealForm.vue'
 import MacroSummary from '@/components/meal/MacroSummary.vue'
+import WeeklyMealPanel from '@/components/meal/WeeklyMealPanel.vue'
 import ExercisePicker from '@/components/workout/ExercisePicker.vue'
-import { getDatesWithLogs, getDayLog, saveDayLog } from '@/db'
+import { useDayLog } from '@/composables/useDayLog'
+import { getDatesWithLogs } from '@/db'
 import { buildCoachContext } from '@/services/coach/aggregator'
 import { generateId, sumMacros, formatDateKey } from '@/utils/helpers'
-import type { DayLog, WorkoutEntry } from '@/types/log'
+import type { WorkoutEntry, CardioEntry, MealEntry } from '@/types/log'
 
 const currentMonth = ref(new Date())
 const datesWithLogs = ref<Set<string>>(new Set())
 const selectedDate = ref<string | null>(null)
-const selectedLog = ref<DayLog | null>(null)
 const editing = ref(false)
 const weeklySummary = ref<{ workoutDays: number; avgCalories: number; avgProteinG: number } | null>(null)
 const showPicker = ref(false)
+
+const { log: selectedLog, saving, update, flushSave, reload } = useDayLog(() => selectedDate.value)
 
 const monthLabel = computed(() =>
   format(currentMonth.value, 'yyyy년 M월', { locale: ko }),
@@ -48,9 +51,11 @@ async function loadWeeklySummary() {
 }
 
 async function selectDate(dateStr: string) {
+  if (editing.value) {
+    await flushSave()
+    editing.value = false
+  }
   selectedDate.value = dateStr
-  selectedLog.value = await getDayLog(dateStr)
-  editing.value = false
 }
 
 function prevMonth() {
@@ -61,17 +66,14 @@ function nextMonth() {
   currentMonth.value = addMonths(currentMonth.value, 1)
 }
 
-async function saveSelected() {
-  if (!selectedLog.value) return
-  await saveDayLog(selectedLog.value)
-  editing.value = false
-  await loadDates()
+async function startEditing() {
+  editing.value = true
 }
 
-function updateLog(mutator: (draft: DayLog) => void) {
-  if (!selectedLog.value) return
-  mutator(selectedLog.value)
-  selectedLog.value = { ...selectedLog.value, updatedAt: new Date().toISOString() }
+async function finishEditing() {
+  await flushSave()
+  editing.value = false
+  await loadDates()
 }
 
 function addWorkout(exerciseId: string, exerciseName: string) {
@@ -81,21 +83,62 @@ function addWorkout(exerciseId: string, exerciseName: string) {
     exerciseName,
     sets: [{ weightKg: 0, reps: 10 }],
   }
-  updateLog((d) => d.workouts.push(entry))
+  update((d) => d.workouts.push(entry), true)
+}
+
+function addCardio() {
+  const entry: CardioEntry = {
+    id: generateId(),
+    type: 'running',
+    durationMin: 30,
+  }
+  update((d) => d.cardio.push(entry), true)
+}
+
+function addMeal() {
+  const entry: MealEntry = {
+    id: generateId(),
+    name: '',
+    calories: 0,
+    carbsG: 0,
+    proteinG: 0,
+    fatG: 0,
+    mealType: 'lunch',
+  }
+  update((d) => d.meals.push(entry), true)
 }
 
 onMounted(async () => {
+  await refresh()
+})
+
+onActivated(async () => {
+  await refresh()
+  if (selectedDate.value) {
+    await reload()
+  }
+})
+
+async function refresh() {
   await loadDates()
   await loadWeeklySummary()
-})
+}
 </script>
 
 <template>
   <div>
     <AppHeader title="기록" subtitle="과거 로그 조회" />
 
+    <p
+      v-if="saving"
+      class="sticky top-0 z-30 bg-primary-600 px-4 py-1 text-center text-xs text-white"
+    >
+      저장 중...
+    </p>
+
     <div class="space-y-4 p-4 pb-24">
-      <!-- 주간 요약 -->
+      <WeeklyMealPanel />
+
       <div v-if="weeklySummary" class="rounded-xl bg-white border border-gray-200 p-4">
         <h3 class="text-sm font-medium text-gray-700 mb-2">최근 7일 요약</h3>
         <div class="grid grid-cols-3 gap-2 text-center text-sm">
@@ -114,7 +157,6 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- 캘린더 -->
       <div class="rounded-xl bg-white border border-gray-200 p-4">
         <div class="mb-3 flex items-center justify-between">
           <button type="button" class="px-2 text-gray-500" @click="prevMonth">◀</button>
@@ -150,16 +192,15 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- 선택된 날짜 상세 -->
-      <div v-if="selectedLog" class="rounded-xl bg-white border border-gray-200 p-4 space-y-4">
+      <div v-if="selectedDate && selectedLog" class="rounded-xl bg-white border border-gray-200 p-4 space-y-4">
         <div class="flex items-center justify-between">
           <h3 class="font-medium">{{ selectedDate }}</h3>
           <button
             type="button"
             class="text-sm text-primary-600"
-            @click="editing ? saveSelected() : (editing = true)"
+            @click="editing ? finishEditing() : startEditing()"
           >
-            {{ editing ? '저장' : '수정' }}
+            {{ editing ? '완료' : '수정' }}
           </button>
         </div>
 
@@ -201,9 +242,9 @@ onMounted(async () => {
               v-for="(w, i) in selectedLog.workouts"
               :key="w.id"
               :workout="w"
-              :date="selectedDate!"
-              @update="(v) => updateLog((d) => { d.workouts[i] = v })"
-              @remove="() => updateLog((d) => d.workouts.splice(i, 1))"
+              :date="selectedDate"
+              @update="(v) => update((d) => { d.workouts[i] = v })"
+              @remove="() => update((d) => d.workouts.splice(i, 1), true)"
             />
             <button
               type="button"
@@ -218,18 +259,32 @@ onMounted(async () => {
               v-for="(c, i) in selectedLog.cardio"
               :key="c.id"
               :entry="c"
-              @update="(v) => updateLog((d) => { d.cardio[i] = v })"
-              @remove="() => updateLog((d) => d.cardio.splice(i, 1))"
+              @update="(v) => update((d) => { d.cardio[i] = v })"
+              @remove="() => update((d) => d.cardio.splice(i, 1), true)"
             />
+            <button
+              type="button"
+              class="w-full rounded-lg border border-dashed py-2 text-sm text-gray-500"
+              @click="addCardio"
+            >
+              + 유산소
+            </button>
           </div>
           <div class="space-y-2">
             <MealForm
               v-for="(m, i) in selectedLog.meals"
               :key="m.id"
               :entry="m"
-              @update="(v) => updateLog((d) => { d.meals[i] = v })"
-              @remove="() => updateLog((d) => d.meals.splice(i, 1))"
+              @update="(v) => update((d) => { d.meals[i] = v })"
+              @remove="() => update((d) => d.meals.splice(i, 1), true)"
             />
+            <button
+              type="button"
+              class="w-full rounded-lg border border-dashed py-2 text-sm text-gray-500"
+              @click="addMeal"
+            >
+              + 식단
+            </button>
           </div>
         </template>
       </div>

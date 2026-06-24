@@ -37,8 +37,12 @@ export async function getDayLog(date: string): Promise<DayLog> {
 }
 
 export async function saveDayLog(log: DayLog): Promise<void> {
+  if (!log.date) {
+    throw new Error('DayLog.date is required')
+  }
+  const plain = JSON.parse(JSON.stringify(log)) as DayLog
   await db.dayLogs.put({
-    ...log,
+    ...plain,
     updatedAt: new Date().toISOString(),
   })
 }
@@ -49,7 +53,8 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
-  await db.settings.put(settings)
+  const plain = JSON.parse(JSON.stringify(settings)) as AppSettings
+  await db.settings.put(plain)
 }
 
 export async function getCustomExercises(): Promise<CustomExercise[]> {

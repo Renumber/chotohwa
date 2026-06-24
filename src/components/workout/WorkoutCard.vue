@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import type { WorkoutEntry } from '@/types/log'
 import { findRecentWorkoutSets } from '@/db'
+import { getHeaviestSet, formatSetLabel } from '@/services/insights/workoutStats'
 
 const props = defineProps<{
   workout: WorkoutEntry
@@ -13,19 +14,27 @@ const emit = defineEmits<{
   remove: []
 }>()
 
-const hint = ref('')
+const lastSets = ref<{ date: string; sets: { weightKg: number; reps: number }[] } | null>(null)
 
-async function loadHint() {
+async function loadLast() {
   const recent = await findRecentWorkoutSets(props.workout.exerciseId, props.date, 1)
-  if (recent[0]) {
-    const sets = recent[0].sets.map((s) => `${s.weightKg}kg×${s.reps}`).join(', ')
-    hint.value = `이전(${recent[0].date}): ${sets}`
-  } else {
-    hint.value = ''
-  }
+  lastSets.value = recent[0] ?? null
 }
 
-watch(() => props.workout.exerciseId, loadHint, { immediate: true })
+watch(() => [props.workout.exerciseId, props.workout.sets] as const, loadLast, { immediate: true, deep: true })
+
+const previousHint = computed(() => {
+  if (!lastSets.value) return null
+  return {
+    dateLabel: lastSets.value.date,
+    lastSetsText: lastSets.value.sets.map((s) => `${s.weightKg}kg×${s.reps}`).join(', '),
+  }
+})
+
+const firstRecordSet = computed(() => {
+  if (lastSets.value || props.workout.sets.length === 0) return null
+  return getHeaviestSet(props.workout.sets)
+})
 
 function updateSet(index: number, field: 'weightKg' | 'reps', value: number) {
   const sets = [...props.workout.sets]
@@ -61,7 +70,12 @@ function addInitialSet() {
     <div class="mb-2 flex items-start justify-between">
       <div>
         <h3 class="font-medium text-gray-900">{{ workout.exerciseName }}</h3>
-        <p v-if="hint" class="mt-0.5 text-xs text-gray-400">{{ hint }}</p>
+        <p v-if="firstRecordSet" class="mt-1 text-xs text-gray-500">
+          (첫기록) <span class="font-medium text-gray-800">{{ formatSetLabel(firstRecordSet) }}</span>
+        </p>
+        <p v-else-if="previousHint" class="mt-1 text-xs text-gray-400">
+          이전({{ previousHint.dateLabel }}): {{ previousHint.lastSetsText }}
+        </p>
       </div>
       <button
         type="button"
