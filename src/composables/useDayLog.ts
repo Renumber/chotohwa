@@ -28,10 +28,14 @@ export function useDayLog(getDate: () => string | null) {
     loading.value = false
   }
 
-  async function persist() {
-    const date = getDate()
-    if (!date) return
+  function clearSaveTimer() {
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+  }
 
+  async function persistForDate(date: string) {
     saving.value = true
     try {
       const payload = cloneDayLog(log.value)
@@ -42,17 +46,20 @@ export function useDayLog(getDate: () => string | null) {
     }
   }
 
+  async function persist() {
+    const date = getDate()
+    if (!date) return
+    await persistForDate(date)
+  }
+
   async function flushSave() {
-    if (saveTimer) {
-      clearTimeout(saveTimer)
-      saveTimer = null
-    }
+    clearSaveTimer()
     await persist()
   }
 
   function scheduleSave(immediate = false) {
     if (!getDate()) return
-    if (saveTimer) clearTimeout(saveTimer)
+    clearSaveTimer()
     if (immediate) {
       void flushSave()
       return
@@ -81,7 +88,8 @@ export function useDayLog(getDate: () => string | null) {
 
   watch(getDate, async (newDate, oldDate) => {
     if (oldDate && newDate !== oldDate) {
-      await flushSave()
+      clearSaveTimer()
+      await persistForDate(oldDate)
     }
     if (newDate) {
       await load()
