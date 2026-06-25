@@ -7,14 +7,13 @@ import ExercisePicker from '@/components/workout/ExercisePicker.vue'
 import WorkoutCard from '@/components/workout/WorkoutCard.vue'
 import CategoryComparisonCard from '@/components/workout/CategoryComparisonCard.vue'
 import CardioForm from '@/components/cardio/CardioForm.vue'
-import MealForm from '@/components/meal/MealForm.vue'
+import MealGroupedList from '@/components/meal/MealGroupedList.vue'
 import MacroSummary from '@/components/meal/MacroSummary.vue'
-import WeeklyMealPanel from '@/components/meal/WeeklyMealPanel.vue'
 import { useDayLog } from '@/composables/useDayLog'
 import { useSettingsStore } from '@/stores/settings'
 import { getTodayCategoryComparisons, type CategoryComparison } from '@/services/insights/workoutStats'
 import { generateId, sumMacros, formatDateKey } from '@/utils/helpers'
-import type { WorkoutEntry, CardioEntry, MealEntry } from '@/types/log'
+import type { WorkoutEntry, CardioEntry, MealEntry, MealType } from '@/types/log'
 
 const today = formatDateKey(new Date())
 const dateLabel = format(new Date(), 'M월 d일 (EEE)', { locale: ko })
@@ -70,6 +69,14 @@ function removeWorkout(index: number) {
   }, true)
 }
 
+function moveWorkout(index: number, direction: -1 | 1) {
+  const target = index + direction
+  update((draft) => {
+    const [item] = draft.workouts.splice(index, 1)
+    draft.workouts.splice(target, 0, item)
+  }, true)
+}
+
 function addCardio() {
   const entry: CardioEntry = {
     id: generateId(),
@@ -93,7 +100,7 @@ function removeCardio(index: number) {
   }, true)
 }
 
-function addMeal() {
+function addMeal(mealType: MealType = 'lunch') {
   const entry: MealEntry = {
     id: generateId(),
     name: '',
@@ -101,7 +108,7 @@ function addMeal() {
     carbsG: 0,
     proteinG: 0,
     fatG: 0,
-    mealType: 'lunch',
+    mealType,
   }
   update((draft) => {
     draft.meals.push(entry)
@@ -156,8 +163,12 @@ function removeMeal(index: number) {
             :key="workout.id"
             :workout="workout"
             :date="today"
+            :can-move-up="i > 0"
+            :can-move-down="i < log.workouts.length - 1"
             @update="updateWorkout(i, $event)"
             @remove="removeWorkout(i)"
+            @move-up="moveWorkout(i, -1)"
+            @move-down="moveWorkout(i, 1)"
           />
           <button
             type="button"
@@ -204,24 +215,17 @@ function removeMeal(index: number) {
           class="flex w-full items-center justify-between px-4 py-3 text-left"
           @click="openSections.meal = !openSections.meal"
         >
-          <span class="font-medium">🍽️ 식단 ({{ log.meals.length }})</span>
+          <span class="font-medium">🍽️ 식단 ({{ Math.round(macroTotals.calories) }}kcal)</span>
           <span class="text-gray-400">{{ openSections.meal ? '▲' : '▼' }}</span>
         </button>
-        <div v-show="openSections.meal" class="space-y-3 px-4 pb-4">
-          <MealForm
-            v-for="(entry, i) in log.meals"
-            :key="entry.id"
-            :entry="entry"
-            @update="updateMeal(i, $event)"
-            @remove="removeMeal(i)"
+        <div v-show="openSections.meal" class="px-4 pb-4">
+          <MealGroupedList
+            :meals="log.meals"
+            :date="today"
+            @update="updateMeal"
+            @remove="removeMeal"
+            @manual-add="addMeal"
           />
-          <button
-            type="button"
-            class="w-full rounded-xl border border-dashed border-gray-300 py-3 text-sm text-gray-500"
-            @click="addMeal"
-          >
-            + 식단 추가
-          </button>
         </div>
       </section>
 
@@ -231,7 +235,6 @@ function removeMeal(index: number) {
         :targets="settingsStore.settings.dailyTargets"
       />
 
-      <WeeklyMealPanel />
     </div>
 
     <ExercisePicker

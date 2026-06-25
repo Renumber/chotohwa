@@ -7,11 +7,15 @@ import { getHeaviestSet, formatSetLabel } from '@/services/insights/workoutStats
 const props = defineProps<{
   workout: WorkoutEntry
   date: string
+  canMoveUp?: boolean
+  canMoveDown?: boolean
 }>()
 
 const emit = defineEmits<{
   update: [workout: WorkoutEntry]
   remove: []
+  moveUp: []
+  moveDown: []
 }>()
 
 const lastSets = ref<{ date: string; sets: { weightKg: number; reps: number }[] } | null>(null)
@@ -67,8 +71,27 @@ function addInitialSet() {
 
 <template>
   <div class="rounded-xl border border-gray-200 bg-white p-3">
-    <div class="mb-2 flex items-start justify-between">
-      <div>
+    <div class="mb-2 flex items-start justify-between gap-2">
+      <div class="flex min-w-0 items-start gap-1">
+        <div v-if="canMoveUp || canMoveDown" class="flex shrink-0 flex-col gap-0.5">
+          <button
+            type="button"
+            class="rounded px-1 text-xs text-gray-400 hover:bg-gray-100 disabled:opacity-30"
+            :disabled="!canMoveUp"
+            @click="emit('moveUp')"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            class="rounded px-1 text-xs text-gray-400 hover:bg-gray-100 disabled:opacity-30"
+            :disabled="!canMoveDown"
+            @click="emit('moveDown')"
+          >
+            ▼
+          </button>
+        </div>
+        <div class="min-w-0">
         <h3 class="font-medium text-gray-900">{{ workout.exerciseName }}</h3>
         <p v-if="firstRecordSet" class="mt-1 text-xs text-gray-500">
           (첫기록) <span class="font-medium text-gray-800">{{ formatSetLabel(firstRecordSet) }}</span>
@@ -76,6 +99,7 @@ function addInitialSet() {
         <p v-else-if="previousHint" class="mt-1 text-xs text-gray-400">
           이전({{ previousHint.dateLabel }}): {{ previousHint.lastSetsText }}
         </p>
+        </div>
       </div>
       <button
         type="button"

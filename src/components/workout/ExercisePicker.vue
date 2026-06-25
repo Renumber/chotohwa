@@ -38,12 +38,23 @@ async function loadCustom() {
 watch(() => props.open, (isOpen) => {
   if (isOpen) void loadCustom()
 })
+
+watch(category, (cat) => {
+  if (cat !== 'all') newCategory.value = cat
+})
+
+function openAddForm() {
+  if (category.value !== 'all') newCategory.value = category.value
+  showAdd.value = true
+}
+
 async function addCustom() {
   if (!newName.value.trim()) return
+  const exerciseCategory = category.value !== 'all' ? category.value : newCategory.value
   const exercise = {
     id: `custom-${generateId()}`,
     name: newName.value.trim(),
-    category: newCategory.value,
+    category: exerciseCategory,
   }
   await addCustomExercise(exercise)
   customExercises.value.push(exercise)
@@ -90,7 +101,7 @@ async function addCustom() {
         <button
           type="button"
           class="w-full rounded-xl border border-dashed border-gray-300 py-3 text-sm text-gray-500"
-          @click="showAdd = true"
+          @click="openAddForm"
         >
           + 직접 추가
         </button>
@@ -103,6 +114,7 @@ async function addCustom() {
           class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
         />
         <select
+          v-if="category === 'all'"
           v-model="newCategory"
           class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
         >
@@ -110,6 +122,9 @@ async function addCustom() {
             {{ label }}
           </option>
         </select>
+        <p v-else class="text-xs text-gray-500">
+          카테고리: {{ CATEGORY_LABELS[category] }}
+        </p>
         <button
           type="button"
           class="w-full rounded-lg bg-primary-600 py-2 text-sm text-white"

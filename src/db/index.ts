@@ -103,3 +103,39 @@ export async function findRecentWorkoutSets(
 
   return results
 }
+
+export interface RecentMeal {
+  name: string
+  calories: number
+  carbsG: number
+  proteinG: number
+  fatG: number
+  lastUsedDate: string
+}
+
+export async function findRecentMeals(excludeDate?: string, limit = 15): Promise<RecentMeal[]> {
+  const logs = await db.dayLogs.orderBy('date').reverse().toArray()
+  const seen = new Set<string>()
+  const results: RecentMeal[] = []
+
+  for (const log of logs) {
+    if (excludeDate && log.date === excludeDate) continue
+    for (const meal of log.meals) {
+      if (!meal.name.trim()) continue
+      const key = meal.name.trim().toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      results.push({
+        name: meal.name.trim(),
+        calories: meal.calories,
+        carbsG: meal.carbsG,
+        proteinG: meal.proteinG,
+        fatG: meal.fatG,
+        lastUsedDate: log.date,
+      })
+      if (results.length >= limit) return results
+    }
+  }
+
+  return results
+}

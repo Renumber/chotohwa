@@ -4,8 +4,9 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, subMo
 import { ko } from 'date-fns/locale'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import WorkoutCard from '@/components/workout/WorkoutCard.vue'
+import WorkoutSummaryCard from '@/components/workout/WorkoutSummaryCard.vue'
 import CardioForm from '@/components/cardio/CardioForm.vue'
-import MealForm from '@/components/meal/MealForm.vue'
+import MealGroupedList from '@/components/meal/MealGroupedList.vue'
 import MacroSummary from '@/components/meal/MacroSummary.vue'
 import WeeklyMealPanel from '@/components/meal/WeeklyMealPanel.vue'
 import ExercisePicker from '@/components/workout/ExercisePicker.vue'
@@ -13,7 +14,7 @@ import { useDayLog } from '@/composables/useDayLog'
 import { getDatesWithLogs } from '@/db'
 import { buildCoachContext } from '@/services/coach/aggregator'
 import { generateId, sumMacros, formatDateKey } from '@/utils/helpers'
-import type { WorkoutEntry, CardioEntry, MealEntry } from '@/types/log'
+import type { WorkoutEntry, CardioEntry, MealEntry, MealType } from '@/types/log'
 
 const currentMonth = ref(new Date())
 const datesWithLogs = ref<Set<string>>(new Set())
@@ -34,6 +35,11 @@ const calendarDays = computed(() => {
   const days = eachDayOfInterval({ start, end })
   const startPad = start.getDay()
   return { days, startPad }
+})
+
+const totalWorkoutSets = computed(() => {
+  if (!selectedLog.value) return 0
+  return selectedLog.value.workouts.reduce((sum, w) => sum + w.sets.length, 0)
 })
 
 async function loadDates() {
@@ -95,7 +101,7 @@ function addCardio() {
   update((d) => d.cardio.push(entry), true)
 }
 
-function addMeal() {
+function addMeal(mealType: MealType = 'lunch') {
   const entry: MealEntry = {
     id: generateId(),
     name: '',
@@ -103,9 +109,17 @@ function addMeal() {
     carbsG: 0,
     proteinG: 0,
     fatG: 0,
-    mealType: 'lunch',
+    mealType,
   }
   update((d) => d.meals.push(entry), true)
+}
+
+function moveWorkout(index: number, direction: -1 | 1) {
+  const target = index + direction
+  update((d) => {
+    const [item] = d.workouts.splice(index, 1)
+    d.workouts.splice(target, 0, item)
+  }, true)
 }
 
 onMounted(async () => {
@@ -205,15 +219,13 @@ async function refresh() {
         </div>
 
         <template v-if="!editing">
-          <div v-if="selectedLog.workouts.length">
-            <p class="text-xs text-gray-400 mb-1">운동</p>
-            <p
+          <div v-if="selectedLog.workouts.length" class="space-y-2">
+            <p class="text-xs text-gray-400">운동 · 총 {{ totalWorkoutSets }}세트</p>
+            <WorkoutSummaryCard
               v-for="w in selectedLog.workouts"
               :key="w.id"
-              class="text-sm"
-            >
-              {{ w.exerciseName }}: {{ w.sets.map(s => `${s.weightKg}kg×${s.reps}`).join(', ') }}
-            </p>
+              :workout="w"
+            />
           </div>
           <div v-if="selectedLog.cardio.length">
             <p class="text-xs text-gray-400 mb-1">유산소</p>
@@ -221,11 +233,8 @@ async function refresh() {
               {{ c.type }} {{ c.durationMin }}분
             </p>
           </div>
-          <div v-if="selectedLog.meals.length">
-            <p class="text-xs text-gray-400 mb-1">식단</p>
-            <p v-for="m in selectedLog.meals" :key="m.id" class="text-sm">
-              {{ m.name }} — {{ m.calories }}kcal
-            </p>
+          <div v-if="selectedLog.meals.length" class="space-y-3">
+            <MealGroupedList :meals="selectedLog.meals" readonly />
             <MacroSummary :totals="sumMacros(selectedLog.meals)" />
           </div>
           <p
@@ -243,8 +252,12 @@ async function refresh() {
               :key="w.id"
               :workout="w"
               :date="selectedDate"
+              :can-move-up="i > 0"
+              :can-move-down="i < selectedLog.workouts.length - 1"
               @update="(v) => update((d) => { d.workouts[i] = v })"
               @remove="() => update((d) => d.workouts.splice(i, 1), true)"
+              @move-up="moveWorkout(i, -1)"
+              @move-down="moveWorkout(i, 1)"
             />
             <button
               type="button"
@@ -270,22 +283,13 @@ async function refresh() {
               + 유산소
             </button>
           </div>
-          <div class="space-y-2">
-            <MealForm
-              v-for="(m, i) in selectedLog.meals"
-              :key="m.id"
-              :entry="m"
-              @update="(v) => update((d) => { d.meals[i] = v })"
-              @remove="() => update((d) => d.meals.splice(i, 1), true)"
-            />
-            <button
-              type="button"
-              class="w-full rounded-lg border border-dashed py-2 text-sm text-gray-500"
-              @click="addMeal"
-            >
-              + 식단
-            </button>
-          </div>
+          <MealGroupedList
+            :meals="selectedLog.meals"
+            :date="selectedDate ?? undefined"
+            @update="(i, v) => update((d) => { d.meals[i] = v })"
+            @remove="(i) => update((d) => d.meals.splice(i, 1), true)"
+            @manual-add="addMeal"
+          />
         </template>
       </div>
     </div>
