@@ -70,7 +70,7 @@ export interface DailyTargets {
   fatG?: number
 }
 
-export type AIProviderType = 'mock' | 'openai' | 'claude'
+export type AIProviderType = 'mock' | 'builtin' | 'gemma' | 'openai' | 'claude'
 
 export interface AppSettings {
   id: 'app'
@@ -80,6 +80,8 @@ export interface AppSettings {
   openaiApiKey?: string
   claudeApiKey?: string
   customPrompt?: string
+  bodyWeightKg?: number
+  onboarded?: boolean
 }
 
 export interface MacroTotals {

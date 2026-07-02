@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAiExport } from '@/composables/useAiExport'
 import { exportBackup, downloadBackup, importBackup, parseBackupFile, type ImportMode } from '@/services/export/backup'
+import { getBuiltinAvailability, isWebGpuSupported, isGemmaModelCached, type BuiltinAvailability } from '@/services/coach/onDevice'
 import { GOAL_LABELS } from '@/types/log'
 import type { FitnessGoal, AIProviderType } from '@/types/log'
 
@@ -16,8 +17,40 @@ const message = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 let messageTimer: ReturnType<typeof setTimeout> | null = null
 
+const builtinAvailability = ref<BuiltinAvailability | null>(null)
+const webGpuSupported = ref(false)
+const gemmaCached = ref(false)
+
+const builtinHint = computed(() => {
+  switch (builtinAvailability.value) {
+    case 'available':
+      return '✅ 이 기기에서 사용 가능 (모델 준비됨)'
+    case 'downloadable':
+    case 'downloading':
+      return 'ℹ️ 사용 가능 — 최초 사용 시 모델을 다운로드합니다'
+    case 'unavailable':
+      return '⚠️ 이 기기에서는 내장 모델을 실행할 수 없습니다'
+    case 'unsupported':
+      return '⚠️ 이 브라우저는 내장 AI를 지원하지 않습니다 (데스크탑 Chrome 138+ 필요, 모바일 미지원)'
+    default:
+      return ''
+  }
+})
+
+const gemmaHint = computed(() => {
+  if (!webGpuSupported.value) {
+    return '⚠️ WebGPU 미지원 브라우저 — 온디바이스 Gemma를 사용할 수 없습니다'
+  }
+  return gemmaCached.value
+    ? '✅ 모델 다운로드 완료 (기기에 저장됨)'
+    : 'ℹ️ 최초 사용 시 Gemma 4 E2B 모델(약 2GB)을 다운로드합니다. Wi-Fi 환경을 권장합니다'
+})
+
 onMounted(() => {
   void settingsStore.load()
+  void getBuiltinAvailability().then((a) => { builtinAvailability.value = a })
+  webGpuSupported.value = isWebGpuSupported()
+  void isGemmaModelCached().then((cached) => { gemmaCached.value = cached })
 })
 
 function showMessage(text: string) {
@@ -61,6 +94,10 @@ function updateTarget(field: 'calories' | 'proteinG', value: number) {
   void settingsStore.save({
     dailyTargets: { ...settingsStore.settings.dailyTargets, [field]: value || undefined },
   })
+}
+
+function updateBodyWeight(value: number) {
+  void settingsStore.save({ bodyWeightKg: value || undefined })
 }
 
 function updateAiProvider(provider: AIProviderType) {
@@ -127,6 +164,17 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
               min="0"
               class="input mt-1"
               @change="updateTarget('proteinG', Number(($event.target as HTMLInputElement).value))"
+            />
+          </div>
+          <div>
+            <label class="field-label">몸무게 (kg)</label>
+            <input
+              :value="settingsStore.settings.bodyWeightKg ?? ''"
+              type="number"
+              inputmode="decimal"
+              min="0"
+              class="input mt-1"
+              @change="updateBodyWeight(Number(($event.target as HTMLInputElement).value))"
             />
           </div>
         </div>
@@ -215,9 +263,29 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
           @change="updateAiProvider(($event.target as HTMLSelectElement).value as AIProviderType)"
         >
           <option value="mock">규칙 기반 (기본)</option>
-          <option value="openai">OpenAI</option>
-          <option value="claude">Claude</option>
+          <option value="builtin">브라우저 내장 AI — Gemini Nano (온디바이스)</option>
+          <option value="gemma">Gemma 4 E2B (온디바이스, WebGPU)</option>
+          <option value="openai">OpenAI (외부 API)</option>
+          <option value="claude">Claude (외부 API)</option>
         </select>
+        <p
+          v-if="settingsStore.settings.aiProvider === 'builtin' && builtinHint"
+          class="text-xs text-gray-500"
+        >
+          {{ builtinHint }}
+        </p>
+        <p
+          v-if="settingsStore.settings.aiProvider === 'gemma'"
+          class="text-xs text-gray-500"
+        >
+          {{ gemmaHint }}
+        </p>
+        <p
+          v-if="settingsStore.settings.aiProvider === 'builtin' || settingsStore.settings.aiProvider === 'gemma'"
+          class="text-xs text-gray-400"
+        >
+          온디바이스 AI는 데이터가 기기를 벗어나지 않습니다. API 키도 필요 없습니다.
+        </p>
         <div v-if="settingsStore.settings.aiProvider === 'openai'">
           <label class="field-label">OpenAI API Key</label>
           <input
