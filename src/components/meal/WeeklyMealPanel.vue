@@ -20,7 +20,7 @@ function toggleDay(date: string) {
 </script>
 
 <template>
-  <div v-if="insights && insights.mealDays > 0" class="rounded-xl bg-white border border-gray-200 p-4 space-y-4">
+  <div v-if="insights && insights.mealDays > 0" class="card p-4 space-y-4">
     <div>
       <h3 class="text-sm font-medium text-gray-700">이번 주 식단</h3>
       <p class="text-xs text-gray-400 mt-0.5">
@@ -115,7 +115,7 @@ function toggleDay(date: string) {
 
   <div
     v-else-if="insights"
-    class="rounded-xl bg-white border border-gray-200 p-4 text-sm text-gray-400 text-center"
+    class="card p-4 text-sm text-gray-400 text-center"
   >
     이번 주 식단 기록이 없습니다
   </div>

@@ -18,6 +18,13 @@ const emit = defineEmits<{
 
 const mealTypes = Object.entries(MEAL_TYPE_LABELS) as [MealType, string][]
 
+const MACRO_FIELDS = [
+  { key: 'calories', label: 'kcal', inputmode: 'numeric' },
+  { key: 'proteinG', label: '단백 (g)', inputmode: 'decimal' },
+  { key: 'carbsG', label: '탄수 (g)', inputmode: 'decimal' },
+  { key: 'fatG', label: '지방 (g)', inputmode: 'decimal' },
+] as const
+
 const showSuggestions = ref(false)
 const selectedPreset = ref<FoodPreset | null>(null)
 const quantity = ref('')
@@ -128,6 +135,10 @@ function setMealType(value: MealType) {
   emit('update', { ...props.entry, mealType: value })
 }
 
+function updateMacro(key: (typeof MACRO_FIELDS)[number]['key'], value: string) {
+  emit('update', { ...props.entry, [key]: Number(value) })
+}
+
 function openEdit() {
   expanded.value = true
   selectedPreset.value = null
@@ -137,19 +148,14 @@ function openEdit() {
 </script>
 
 <template>
-  <div class="rounded-xl border border-gray-200 bg-white p-3 space-y-3">
+  <div class="card p-3 space-y-3">
     <div class="flex items-center justify-between gap-2">
       <div v-if="!grouped" class="flex flex-wrap gap-1">
         <button
           v-for="[value, label] in mealTypes"
           :key="value"
           type="button"
-          class="rounded-full px-2.5 py-1 text-xs"
-          :class="
-            entry.mealType === value
-              ? 'bg-primary-600 text-white'
-              : 'bg-gray-100 text-gray-600'
-          "
+          :class="entry.mealType === value ? 'chip-active' : 'chip-inactive'"
           @click="setMealType(value)"
         >
           {{ label }}
@@ -157,7 +163,7 @@ function openEdit() {
       </div>
       <button
         type="button"
-        class="shrink-0 text-xs text-red-500"
+        class="btn-danger-ghost"
         :class="{ 'ml-auto': grouped }"
         @click="emit('remove')"
       >
@@ -170,7 +176,7 @@ function openEdit() {
         :value="selectedPreset ? entry.name : nameQuery"
         type="text"
         placeholder="음식 이름"
-        class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+        class="input"
         :readonly="!!selectedPreset"
         @input="onNameInput(($event.target as HTMLInputElement).value)"
         @focus="onNameFocus"
@@ -215,13 +221,13 @@ function openEdit() {
     </div>
 
     <div v-if="selectedPreset">
-      <label class="text-xs text-gray-400">수량 ({{ selectedPreset.unitLabel }})</label>
+      <label class="field-label">수량 ({{ selectedPreset.unitLabel }})</label>
       <input
         :value="quantity"
         type="number"
         inputmode="decimal"
         min="0"
-        class="mt-0.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+        class="input mt-0.5"
         @input="onQuantityInput(($event.target as HTMLInputElement).value)"
       />
     </div>
@@ -243,48 +249,15 @@ function openEdit() {
     </div>
 
     <div v-else-if="!selectedPreset" class="grid grid-cols-2 gap-2">
-      <div>
-        <label class="text-xs text-gray-400">kcal</label>
+      <div v-for="field in MACRO_FIELDS" :key="field.key">
+        <label class="field-label">{{ field.label }}</label>
         <input
-          :value="entry.calories"
+          :value="entry[field.key]"
           type="number"
-          inputmode="numeric"
+          :inputmode="field.inputmode"
           min="0"
-          class="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
-          @input="emit('update', { ...entry, calories: Number(($event.target as HTMLInputElement).value) })"
-        />
-      </div>
-      <div>
-        <label class="text-xs text-gray-400">단백 (g)</label>
-        <input
-          :value="entry.proteinG"
-          type="number"
-          inputmode="decimal"
-          min="0"
-          class="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
-          @input="emit('update', { ...entry, proteinG: Number(($event.target as HTMLInputElement).value) })"
-        />
-      </div>
-      <div>
-        <label class="text-xs text-gray-400">탄수 (g)</label>
-        <input
-          :value="entry.carbsG"
-          type="number"
-          inputmode="decimal"
-          min="0"
-          class="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
-          @input="emit('update', { ...entry, carbsG: Number(($event.target as HTMLInputElement).value) })"
-        />
-      </div>
-      <div>
-        <label class="text-xs text-gray-400">지방 (g)</label>
-        <input
-          :value="entry.fatG"
-          type="number"
-          inputmode="decimal"
-          min="0"
-          class="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
-          @input="emit('update', { ...entry, fatG: Number(($event.target as HTMLInputElement).value) })"
+          class="input mt-0.5 px-2 py-1.5"
+          @input="updateMacro(field.key, ($event.target as HTMLInputElement).value)"
         />
       </div>
     </div>

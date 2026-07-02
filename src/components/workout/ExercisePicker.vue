@@ -16,19 +16,19 @@ const emit = defineEmits<{
 }>()
 
 const category = ref<ExerciseCategory | 'all'>('all')
+const searchQuery = ref('')
 const customExercises = ref<{ id: string; name: string; category: ExerciseCategory }[]>([])
 const showAdd = ref(false)
 const newName = ref('')
 const newCategory = ref<ExerciseCategory>('chest')
 
 const filtered = computed(() => {
-  const presets = EXERCISE_PRESETS.filter(
-    (e) => category.value === 'all' || e.category === category.value,
+  const q = searchQuery.value.trim().toLowerCase()
+  return [...EXERCISE_PRESETS, ...customExercises.value].filter(
+    (e) =>
+      (category.value === 'all' || e.category === category.value)
+      && (!q || e.name.toLowerCase().includes(q)),
   )
-  const custom = customExercises.value.filter(
-    (e) => category.value === 'all' || e.category === category.value,
-  )
-  return [...presets, ...custom]
 })
 
 async function loadCustom() {
@@ -36,7 +36,10 @@ async function loadCustom() {
 }
 
 watch(() => props.open, (isOpen) => {
-  if (isOpen) void loadCustom()
+  if (isOpen) {
+    searchQuery.value = ''
+    void loadCustom()
+  }
 })
 
 watch(category, (cat) => {
@@ -68,29 +71,34 @@ async function addCustom() {
 <template>
   <Modal :open="open" title="운동 선택" @close="emit('close')">
     <div v-if="open" class="space-y-4">
+      <input
+        v-model="searchQuery"
+        type="search"
+        placeholder="운동 검색"
+        class="input"
+      />
+
       <div class="flex flex-wrap gap-2">
         <button
           v-for="(label, key) in { all: '전체', ...CATEGORY_LABELS }"
           :key="key"
           type="button"
-          class="rounded-full px-3 py-1 text-xs"
-          :class="
-            category === key
-              ? 'bg-primary-600 text-white'
-              : 'bg-gray-100 text-gray-600'
-          "
+          :class="category === key ? 'chip-active' : 'chip-inactive'"
           @click="category = key as ExerciseCategory | 'all'"
         >
           {{ label }}
         </button>
       </div>
 
-      <div class="grid grid-cols-2 gap-2">
+      <p v-if="!filtered.length" class="py-4 text-center text-sm text-gray-400">
+        검색 결과가 없어요
+      </p>
+      <div v-else class="grid grid-cols-2 gap-2">
         <button
           v-for="exercise in filtered"
           :key="exercise.id"
           type="button"
-          class="rounded-xl border border-gray-200 bg-gray-100 px-3 py-3 text-left text-sm hover:border-primary-500"
+          class="rounded-xl border border-gray-200 bg-gray-100 px-3 py-3 text-left text-sm transition-colors hover:border-primary-500 hover:bg-primary-50"
           @click="emit('select', exercise.id, exercise.name); emit('close')"
         >
           {{ exercise.name }}
@@ -98,11 +106,7 @@ async function addCustom() {
       </div>
 
       <div v-if="!showAdd">
-        <button
-          type="button"
-          class="w-full rounded-xl border border-dashed border-gray-300 py-3 text-sm text-gray-500"
-          @click="openAddForm"
-        >
+        <button type="button" class="btn-dashed py-3" @click="openAddForm">
           + 직접 추가
         </button>
       </div>
@@ -111,12 +115,13 @@ async function addCustom() {
           v-model="newName"
           type="text"
           placeholder="운동 이름"
-          class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          class="input"
+          @keyup.enter="addCustom"
         />
         <select
           v-if="category === 'all'"
           v-model="newCategory"
-          class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          class="input"
         >
           <option v-for="(label, key) in CATEGORY_LABELS" :key="key" :value="key">
             {{ label }}
@@ -127,7 +132,8 @@ async function addCustom() {
         </p>
         <button
           type="button"
-          class="w-full rounded-lg bg-primary-600 py-2 text-sm text-white"
+          class="btn-primary w-full py-2"
+          :disabled="!newName.trim()"
           @click="addCustom"
         >
           추가하고 선택

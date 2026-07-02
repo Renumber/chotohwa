@@ -52,7 +52,7 @@ const groups = computed(() => groupMealsByType(props.meals))
         />
         <button
           type="button"
-          class="w-full rounded-lg border border-dashed border-gray-200 py-2 text-xs text-gray-500 hover:border-primary-500 hover:text-primary-600"
+          class="btn-dashed py-2 text-xs"
           @click="emit('manual-add', group.type)"
         >
           + {{ group.label }} 추가

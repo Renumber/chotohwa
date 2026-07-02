@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onActivated } from 'vue'
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, subMonths, addMonths } from 'date-fns'
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, subMonths, addMonths, parseISO } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import AppHeader from '@/components/layout/AppHeader.vue'
+import SavingIndicator from '@/components/common/SavingIndicator.vue'
 import WorkoutCard from '@/components/workout/WorkoutCard.vue'
 import WorkoutSummaryCard from '@/components/workout/WorkoutSummaryCard.vue'
 import CardioForm from '@/components/cardio/CardioForm.vue'
@@ -13,9 +14,13 @@ import ExercisePicker from '@/components/workout/ExercisePicker.vue'
 import { useDayLog } from '@/composables/useDayLog'
 import { getDatesWithLogs } from '@/db'
 import { buildCoachContext } from '@/services/coach/aggregator'
-import { generateId, sumMacros, formatDateKey } from '@/utils/helpers'
-import type { WorkoutEntry, CardioEntry, MealEntry, MealType } from '@/types/log'
+import { sumMacros, formatDateKey } from '@/utils/helpers'
+import { createWorkoutEntry, createCardioEntry, createMealEntry, countTotalSets } from '@/utils/entryFactories'
+import { CARDIO_TYPE_LABELS, type MealType } from '@/types/log'
 
+const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토']
+
+const todayKey = formatDateKey(new Date())
 const currentMonth = ref(new Date())
 const datesWithLogs = ref<Set<string>>(new Set())
 const selectedDate = ref<string | null>(null)
@@ -29,6 +34,11 @@ const monthLabel = computed(() =>
   format(currentMonth.value, 'yyyy년 M월', { locale: ko }),
 )
 
+const selectedDateLabel = computed(() => {
+  if (!selectedDate.value) return ''
+  return format(parseISO(selectedDate.value), 'M월 d일 (EEE)', { locale: ko })
+})
+
 const calendarDays = computed(() => {
   const start = startOfMonth(currentMonth.value)
   const end = endOfMonth(currentMonth.value)
@@ -37,9 +47,14 @@ const calendarDays = computed(() => {
   return { days, startPad }
 })
 
-const totalWorkoutSets = computed(() => {
-  if (!selectedLog.value) return 0
-  return selectedLog.value.workouts.reduce((sum, w) => sum + w.sets.length, 0)
+const totalWorkoutSets = computed(() =>
+  selectedLog.value ? countTotalSets(selectedLog.value.workouts) : 0,
+)
+
+const isSelectedLogEmpty = computed(() => {
+  const log = selectedLog.value
+  if (!log) return true
+  return !log.workouts.length && !log.cardio.length && !log.meals.length
 })
 
 async function loadDates() {
@@ -64,6 +79,11 @@ async function selectDate(dateStr: string) {
   selectedDate.value = dateStr
 }
 
+function goToday() {
+  currentMonth.value = new Date()
+  void selectDate(todayKey)
+}
+
 function prevMonth() {
   currentMonth.value = subMonths(currentMonth.value, 1)
 }
@@ -72,7 +92,7 @@ function nextMonth() {
   currentMonth.value = addMonths(currentMonth.value, 1)
 }
 
-async function startEditing() {
+function startEditing() {
   editing.value = true
 }
 
@@ -83,34 +103,17 @@ async function finishEditing() {
 }
 
 function addWorkout(exerciseId: string, exerciseName: string) {
-  const entry: WorkoutEntry = {
-    id: generateId(),
-    exerciseId,
-    exerciseName,
-    sets: [{ weightKg: 0, reps: 10 }],
-  }
+  const entry = createWorkoutEntry(exerciseId, exerciseName)
   update((d) => d.workouts.push(entry), true)
 }
 
 function addCardio() {
-  const entry: CardioEntry = {
-    id: generateId(),
-    type: 'running',
-    durationMin: 30,
-  }
+  const entry = createCardioEntry()
   update((d) => d.cardio.push(entry), true)
 }
 
 function addMeal(mealType: MealType = 'lunch') {
-  const entry: MealEntry = {
-    id: generateId(),
-    name: '',
-    calories: 0,
-    carbsG: 0,
-    proteinG: 0,
-    fatG: 0,
-    mealType,
-  }
+  const entry = createMealEntry(mealType)
   update((d) => d.meals.push(entry), true)
 }
 
@@ -143,18 +146,13 @@ async function refresh() {
   <div>
     <AppHeader title="기록" subtitle="과거 로그 조회" />
 
-    <p
-      v-if="saving"
-      class="sticky top-0 z-30 bg-primary-600 px-4 py-1 text-center text-xs text-white"
-    >
-      저장 중...
-    </p>
+    <SavingIndicator :saving="saving" />
 
     <div class="space-y-4 p-4 pb-24">
       <WeeklyMealPanel />
 
-      <div v-if="weeklySummary" class="rounded-xl bg-white border border-gray-200 p-4">
-        <h3 class="text-sm font-medium text-gray-700 mb-2">최근 7일 요약</h3>
+      <div v-if="weeklySummary" class="card p-4">
+        <h3 class="mb-2 text-sm font-medium text-gray-700">최근 7일 요약</h3>
         <div class="grid grid-cols-3 gap-2 text-center text-sm">
           <div>
             <p class="font-bold text-primary-600">{{ weeklySummary.workoutDays }}일</p>
@@ -171,14 +169,37 @@ async function refresh() {
         </div>
       </div>
 
-      <div class="rounded-xl bg-white border border-gray-200 p-4">
+      <div class="card p-4">
         <div class="mb-3 flex items-center justify-between">
-          <button type="button" class="px-2 text-gray-500" @click="prevMonth">◀</button>
-          <span class="font-medium">{{ monthLabel }}</span>
-          <button type="button" class="px-2 text-gray-500" @click="nextMonth">▶</button>
+          <button
+            type="button"
+            class="rounded-lg px-2 py-1 text-gray-500 hover:bg-gray-100"
+            aria-label="이전 달"
+            @click="prevMonth"
+          >
+            ◀
+          </button>
+          <div class="flex items-center gap-2">
+            <span class="font-medium">{{ monthLabel }}</span>
+            <button
+              type="button"
+              class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-200"
+              @click="goToday"
+            >
+              오늘
+            </button>
+          </div>
+          <button
+            type="button"
+            class="rounded-lg px-2 py-1 text-gray-500 hover:bg-gray-100"
+            aria-label="다음 달"
+            @click="nextMonth"
+          >
+            ▶
+          </button>
         </div>
-        <div class="grid grid-cols-7 gap-1 text-center text-xs text-gray-400 mb-1">
-          <span v-for="d in ['일','월','화','수','목','금','토']" :key="d">{{ d }}</span>
+        <div class="mb-1 grid grid-cols-7 gap-1 text-center text-xs text-gray-400">
+          <span v-for="d in WEEKDAY_LABELS" :key="d">{{ d }}</span>
         </div>
         <div class="grid grid-cols-7 gap-1">
           <div v-for="n in calendarDays.startPad" :key="`pad-${n}`" />
@@ -186,13 +207,16 @@ async function refresh() {
             v-for="day in calendarDays.days"
             :key="day.toISOString()"
             type="button"
-            class="relative aspect-square rounded-lg text-sm"
+            class="relative aspect-square rounded-lg text-sm transition-colors"
             :class="[
               selectedDate === formatDateKey(day)
-                ? 'bg-primary-600 text-white'
+                ? 'bg-primary-600 font-medium text-white'
                 : isSameMonth(day, currentMonth)
                   ? 'hover:bg-gray-100'
                   : 'text-gray-300',
+              formatDateKey(day) === todayKey && selectedDate !== formatDateKey(day)
+                ? 'ring-1 ring-inset ring-primary-500 font-medium text-primary-600'
+                : '',
             ]"
             @click="selectDate(formatDateKey(day))"
           >
@@ -206,12 +230,16 @@ async function refresh() {
         </div>
       </div>
 
-      <div v-if="selectedDate && selectedLog" class="rounded-xl bg-white border border-gray-200 p-4 space-y-4">
+      <p v-if="!selectedDate" class="text-center text-sm text-gray-400">
+        날짜를 선택하면 기록을 볼 수 있어요
+      </p>
+
+      <div v-if="selectedDate && selectedLog" class="card space-y-4 p-4">
         <div class="flex items-center justify-between">
-          <h3 class="font-medium">{{ selectedDate }}</h3>
+          <h3 class="font-medium">{{ selectedDateLabel }}</h3>
           <button
             type="button"
-            class="text-sm text-primary-600"
+            class="btn-secondary px-3 py-1.5"
             @click="editing ? finishEditing() : startEditing()"
           >
             {{ editing ? '완료' : '수정' }}
@@ -228,20 +256,18 @@ async function refresh() {
             />
           </div>
           <div v-if="selectedLog.cardio.length">
-            <p class="text-xs text-gray-400 mb-1">유산소</p>
+            <p class="mb-1 text-xs text-gray-400">유산소</p>
             <p v-for="c in selectedLog.cardio" :key="c.id" class="text-sm">
-              {{ c.type }} {{ c.durationMin }}분
+              {{ CARDIO_TYPE_LABELS[c.type] }} {{ c.durationMin }}분
+              <span v-if="c.distanceKm" class="text-gray-400">· {{ c.distanceKm }}km</span>
             </p>
           </div>
           <div v-if="selectedLog.meals.length" class="space-y-3">
             <MealGroupedList :meals="selectedLog.meals" readonly />
             <MacroSummary :totals="sumMacros(selectedLog.meals)" />
           </div>
-          <p
-            v-if="!selectedLog.workouts.length && !selectedLog.cardio.length && !selectedLog.meals.length"
-            class="text-sm text-gray-400"
-          >
-            기록 없음
+          <p v-if="isSelectedLogEmpty" class="py-2 text-center text-sm text-gray-400">
+            기록 없음 — 수정 버튼으로 기록을 추가할 수 있어요
           </p>
         </template>
 
@@ -259,11 +285,7 @@ async function refresh() {
               @move-up="moveWorkout(i, -1)"
               @move-down="moveWorkout(i, 1)"
             />
-            <button
-              type="button"
-              class="w-full rounded-lg border border-dashed py-2 text-sm text-primary-600"
-              @click="showPicker = true"
-            >
+            <button type="button" class="btn-dashed-primary" @click="showPicker = true">
               + 운동
             </button>
           </div>
@@ -275,11 +297,7 @@ async function refresh() {
               @update="(v) => update((d) => { d.cardio[i] = v })"
               @remove="() => update((d) => d.cardio.splice(i, 1), true)"
             />
-            <button
-              type="button"
-              class="w-full rounded-lg border border-dashed py-2 text-sm text-gray-500"
-              @click="addCardio"
-            >
+            <button type="button" class="btn-dashed" @click="addCardio">
               + 유산소
             </button>
           </div>

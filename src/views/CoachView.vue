@@ -32,18 +32,20 @@ async function analyze() {
 
       <button
         type="button"
-        class="w-full rounded-xl bg-primary-600 py-3 text-white font-medium disabled:opacity-50"
+        class="btn-primary w-full rounded-xl py-3"
         :disabled="loading"
         @click="analyze"
       >
         {{ loading ? '분석 중...' : '최근 7일 데이터 분석하기' }}
       </button>
 
-      <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
+      <p v-if="error" class="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
+        {{ error }}
+      </p>
 
       <div
         v-if="feedback"
-        class="rounded-xl bg-white border border-gray-200 p-4 prose prose-sm max-w-none whitespace-pre-wrap text-sm text-gray-800"
+        class="card p-4 max-w-none whitespace-pre-wrap text-sm text-gray-800"
         v-text="feedback"
       />
     </div>

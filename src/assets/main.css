@@ -43,3 +43,46 @@ input[type='number']::-webkit-outer-spin-button {
 input[type='number'] {
   -moz-appearance: textfield;
 }
+
+/* ---- 공용 컴포넌트 클래스 ---- */
+@layer components {
+  .card {
+    @apply rounded-xl border border-gray-200 bg-white;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-primary-500 focus:ring-2 focus:ring-primary-100;
+  }
+
+  .field-label {
+    @apply text-xs text-gray-500;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1 rounded-lg bg-primary-600 text-sm font-medium text-white transition-all hover:bg-primary-700 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1 rounded-lg bg-gray-100 text-sm font-medium text-gray-700 transition-all hover:bg-gray-200 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-dashed {
+    @apply inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-300 py-2.5 text-sm font-medium text-gray-500 transition-all hover:border-primary-500 hover:bg-primary-50 hover:text-primary-600 active:scale-[0.98];
+  }
+
+  .btn-dashed-primary {
+    @apply inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-primary-500 py-2.5 text-sm font-medium text-primary-600 transition-all hover:bg-primary-50 active:scale-[0.98];
+  }
+
+  .btn-danger-ghost {
+    @apply inline-flex shrink-0 items-center justify-center rounded-md px-2 py-1 text-xs text-red-500 transition-colors hover:bg-red-50;
+  }
+
+  .chip-active {
+    @apply rounded-full bg-primary-600 px-3 py-1.5 text-xs font-medium text-white transition-colors;
+  }
+
+  .chip-inactive {
+    @apply rounded-full bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200;
+  }
+}

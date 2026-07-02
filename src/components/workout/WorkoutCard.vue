@@ -70,7 +70,7 @@ function addInitialSet() {
 </script>
 
 <template>
-  <div class="rounded-xl border border-gray-200 bg-white p-3">
+  <div class="card p-3">
     <div class="mb-2 flex items-start justify-between gap-2">
       <div class="flex min-w-0 items-start gap-1">
         <div v-if="canMoveUp || canMoveDown" class="flex shrink-0 flex-col gap-0.5">
@@ -92,18 +92,18 @@ function addInitialSet() {
           </button>
         </div>
         <div class="min-w-0">
-        <h3 class="font-medium text-gray-900">{{ workout.exerciseName }}</h3>
-        <p v-if="firstRecordSet" class="mt-1 text-xs text-gray-500">
-          (첫기록) <span class="font-medium text-gray-800">{{ formatSetLabel(firstRecordSet) }}</span>
-        </p>
-        <p v-else-if="previousHint" class="mt-1 text-xs text-gray-400">
-          이전({{ previousHint.dateLabel }}): {{ previousHint.lastSetsText }}
-        </p>
+          <h3 class="font-medium text-gray-900">{{ workout.exerciseName }}</h3>
+          <p v-if="firstRecordSet" class="mt-1 text-xs text-gray-500">
+            (첫기록) <span class="font-medium text-gray-800">{{ formatSetLabel(firstRecordSet) }}</span>
+          </p>
+          <p v-else-if="previousHint" class="mt-1 text-xs text-gray-400">
+            이전({{ previousHint.dateLabel }}): {{ previousHint.lastSetsText }}
+          </p>
         </div>
       </div>
       <button
         type="button"
-        class="text-xs text-red-500"
+        class="btn-danger-ghost"
         @click="emit('remove')"
       >
         삭제
@@ -113,7 +113,7 @@ function addInitialSet() {
     <div v-if="workout.sets.length === 0">
       <button
         type="button"
-        class="w-full rounded-lg bg-gray-100 py-2 text-sm text-gray-600"
+        class="btn-secondary w-full py-2"
         @click="addInitialSet"
       >
         세트 추가
@@ -132,7 +132,8 @@ function addInitialSet() {
           type="number"
           inputmode="decimal"
           min="0"
-          class="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
+          class="input w-20 px-2 py-1.5"
+          aria-label="무게(kg)"
           @input="updateSet(i, 'weightKg', Number(($event.target as HTMLInputElement).value))"
         />
         <span class="text-xs text-gray-400">kg</span>
@@ -141,13 +142,15 @@ function addInitialSet() {
           type="number"
           inputmode="numeric"
           min="0"
-          class="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
+          class="input w-16 px-2 py-1.5"
+          aria-label="반복 횟수"
           @input="updateSet(i, 'reps', Number(($event.target as HTMLInputElement).value))"
         />
         <span class="text-xs text-gray-400">회</span>
         <button
           type="button"
-          class="ml-auto text-xs text-gray-400"
+          class="ml-auto rounded-md px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500"
+          aria-label="세트 삭제"
           @click="removeSet(i)"
         >
           ✕
@@ -155,7 +158,7 @@ function addInitialSet() {
       </div>
       <button
         type="button"
-        class="w-full rounded-lg border border-dashed border-gray-200 py-1.5 text-xs text-gray-500"
+        class="btn-dashed py-1.5 text-xs"
         @click="addSet"
       >
         + 세트

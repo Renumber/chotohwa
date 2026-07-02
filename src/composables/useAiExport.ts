@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { format } from 'date-fns'
 import { buildCoachContext, type ExportPeriod } from '@/services/coach/aggregator'
+import type { CoachContext } from '@/types/log'
 import { toMarkdown, toPortableJson } from '@/services/export/aiExport'
 import { buildPrompt } from '@/services/export/promptTemplates'
 import { downloadFile, copyToClipboard } from '@/utils/helpers'
@@ -13,15 +14,25 @@ export function useAiExport() {
   const format_ = ref<ExportFormat>('markdown')
   const loading = ref(false)
   const toast = ref('')
+  let toastTimer: ReturnType<typeof setTimeout> | null = null
 
-  async function getContext() {
-    return buildCoachContext(period.value)
+  function showToast(message: string) {
+    toast.value = message
+    if (toastTimer) clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => { toast.value = '' }, 2000)
+  }
+
+  async function buildText(ctx: CoachContext): Promise<string> {
+    if (format_.value === 'markdown') return toMarkdown(ctx)
+    if (format_.value === 'json') return toPortableJson(ctx)
+    const settings = await getSettings()
+    return buildPrompt(ctx, settings.customPrompt)
   }
 
   async function download() {
     loading.value = true
     try {
-      const ctx = await getContext()
+      const ctx = await buildCoachContext(period.value)
       const dateStr = format(new Date(), 'yyyy-MM-dd')
 
       if (format_.value === 'markdown') {
@@ -29,10 +40,9 @@ export function useAiExport() {
       } else if (format_.value === 'json') {
         downloadFile(toPortableJson(ctx), `chotohwa-context-${dateStr}.json`, 'application/json')
       } else {
-        const settings = await getSettings()
-        const text = buildPrompt(ctx, settings.customPrompt)
-        const ok = await copyToClipboard(text)
-        toast.value = ok ? '클립보드에 복사됨' : '복사 실패'
+        // 프롬프트 형식은 파일보다 붙여넣기 용도라 클립보드로 처리
+        const ok = await copyToClipboard(await buildText(ctx))
+        showToast(ok ? '클립보드에 복사됨' : '복사 실패')
       }
     } finally {
       loading.value = false
@@ -42,21 +52,9 @@ export function useAiExport() {
   async function copy() {
     loading.value = true
     try {
-      const ctx = await getContext()
-      const settings = await getSettings()
-      let text: string
-
-      if (format_.value === 'markdown') {
-        text = toMarkdown(ctx)
-      } else if (format_.value === 'json') {
-        text = toPortableJson(ctx)
-      } else {
-        text = buildPrompt(ctx, settings.customPrompt)
-      }
-
-      const ok = await copyToClipboard(text)
-      toast.value = ok ? '클립보드에 복사됨' : '복사 실패'
-      setTimeout(() => { toast.value = '' }, 2000)
+      const ctx = await buildCoachContext(period.value)
+      const ok = await copyToClipboard(await buildText(ctx))
+      showToast(ok ? '클립보드에 복사됨' : '복사 실패')
     } finally {
       loading.value = false
     }

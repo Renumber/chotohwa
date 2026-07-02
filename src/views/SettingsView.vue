@@ -14,19 +14,26 @@ const importMode = ref<ImportMode>('merge')
 const backupLoading = ref(false)
 const message = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
+let messageTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(() => {
   void settingsStore.load()
 })
+
+function showMessage(text: string) {
+  message.value = text
+  if (messageTimer) clearTimeout(messageTimer)
+  messageTimer = setTimeout(() => { message.value = '' }, 3000)
+}
 
 async function handleBackup() {
   backupLoading.value = true
   try {
     const data = await exportBackup()
     downloadBackup(data)
-    message.value = '백업 파일이 다운로드되었습니다.'
+    showMessage('백업 파일이 다운로드되었습니다.')
   } catch {
-    message.value = '백업 실패'
+    showMessage('백업 실패')
   } finally {
     backupLoading.value = false
   }
@@ -38,10 +45,10 @@ async function handleImport(e: Event) {
   try {
     const data = await parseBackupFile(file)
     await importBackup(data, importMode.value)
-    message.value = '가져오기 완료'
+    showMessage('가져오기 완료')
     await settingsStore.load()
   } catch (err) {
-    message.value = err instanceof Error ? err.message : '가져오기 실패'
+    showMessage(err instanceof Error ? err.message : '가져오기 실패')
   }
   if (fileInput.value) fileInput.value.value = ''
 }
@@ -70,23 +77,30 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
     <AppHeader title="설정" />
 
     <div class="space-y-6 p-4 pb-24">
-      <p v-if="message" class="text-sm text-primary-600">{{ message }}</p>
-      <p v-if="toast" class="text-sm text-primary-600">{{ toast }}</p>
+      <Transition
+        enter-active-class="transition-opacity duration-150"
+        enter-from-class="opacity-0"
+        leave-active-class="transition-opacity duration-300"
+        leave-to-class="opacity-0"
+      >
+        <p
+          v-if="message || toast"
+          class="rounded-lg bg-primary-50 border border-primary-100 px-3 py-2 text-sm text-primary-700"
+        >
+          {{ message || toast }}
+        </p>
+      </Transition>
 
       <!-- 목표 -->
-      <section class="rounded-xl bg-white border border-gray-200 p-4 space-y-3">
+      <section class="card p-4 space-y-3">
         <h2 class="font-medium">목표</h2>
         <div class="flex flex-wrap gap-2">
           <button
             v-for="(label, key) in GOAL_LABELS"
             :key="key"
             type="button"
-            class="rounded-full px-4 py-1.5 text-sm"
-            :class="
-              settingsStore.settings.goal === key
-                ? 'bg-primary-600 text-white'
-                : 'bg-gray-100 text-gray-600'
-            "
+            class="px-4 text-sm"
+            :class="settingsStore.settings.goal === key ? 'chip-active' : 'chip-inactive'"
             @click="updateGoal(key as FitnessGoal)"
           >
             {{ label }}
@@ -94,20 +108,24 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="text-xs text-gray-400">일일 칼로리 목표</label>
+            <label class="field-label">일일 칼로리 목표</label>
             <input
               :value="settingsStore.settings.dailyTargets.calories ?? ''"
               type="number"
-              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              inputmode="numeric"
+              min="0"
+              class="input mt-1"
               @change="updateTarget('calories', Number(($event.target as HTMLInputElement).value))"
             />
           </div>
           <div>
-            <label class="text-xs text-gray-400">일일 단백질 목표(g)</label>
+            <label class="field-label">일일 단백질 목표(g)</label>
             <input
               :value="settingsStore.settings.dailyTargets.proteinG ?? ''"
               type="number"
-              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              inputmode="numeric"
+              min="0"
+              class="input mt-1"
               @change="updateTarget('proteinG', Number(($event.target as HTMLInputElement).value))"
             />
           </div>
@@ -115,11 +133,11 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
       </section>
 
       <!-- 백업 -->
-      <section class="rounded-xl bg-white border border-gray-200 p-4 space-y-3">
+      <section class="card p-4 space-y-3">
         <h2 class="font-medium">백업 / 복원</h2>
         <button
           type="button"
-          class="w-full rounded-lg bg-gray-100 py-2.5 text-sm"
+          class="btn-secondary w-full py-2.5"
           :disabled="backupLoading"
           @click="handleBackup"
         >
@@ -145,23 +163,23 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
       </section>
 
       <!-- AI 보내기 -->
-      <section class="rounded-xl bg-white border border-gray-200 p-4 space-y-3">
+      <section class="card p-4 space-y-3">
         <h2 class="font-medium">AI에게 보내기</h2>
         <p class="text-xs text-gray-400">
           ChatGPT, Claude 등 외부 AI에 붙여넣거나 파일로 첨부할 수 있습니다.
         </p>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="text-xs text-gray-400">기간</label>
-            <select v-model="period" class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+            <label class="field-label">기간</label>
+            <select v-model="period" class="input mt-1">
               <option :value="7">최근 7일</option>
               <option :value="30">최근 30일</option>
               <option value="all">전체</option>
             </select>
           </div>
           <div>
-            <label class="text-xs text-gray-400">형식</label>
-            <select v-model="exportFormat" class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+            <label class="field-label">형식</label>
+            <select v-model="exportFormat" class="input mt-1">
               <option value="markdown">마크다운</option>
               <option value="json">포터블 JSON</option>
               <option value="prompt">프롬프트</option>
@@ -171,7 +189,7 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
         <div class="flex gap-2">
           <button
             type="button"
-            class="flex-1 rounded-lg bg-primary-600 py-2.5 text-sm text-white disabled:opacity-50"
+            class="btn-primary flex-1 py-2.5"
             :disabled="exportLoading"
             @click="download"
           >
@@ -179,7 +197,7 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
           </button>
           <button
             type="button"
-            class="flex-1 rounded-lg bg-gray-100 py-2.5 text-sm disabled:opacity-50"
+            class="btn-secondary flex-1 py-2.5"
             :disabled="exportLoading"
             @click="copy"
           >
@@ -189,11 +207,11 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
       </section>
 
       <!-- AI 연결 -->
-      <section class="rounded-xl bg-white border border-gray-200 p-4 space-y-3">
+      <section class="card p-4 space-y-3">
         <h2 class="font-medium">AI 코치 연결 <span class="text-xs text-amber-600">실험</span></h2>
         <select
           :value="settingsStore.settings.aiProvider"
-          class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          class="input"
           @change="updateAiProvider(($event.target as HTMLSelectElement).value as AIProviderType)"
         >
           <option value="mock">규칙 기반 (기본)</option>
@@ -201,22 +219,24 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
           <option value="claude">Claude</option>
         </select>
         <div v-if="settingsStore.settings.aiProvider === 'openai'">
-          <label class="text-xs text-gray-400">OpenAI API Key</label>
+          <label class="field-label">OpenAI API Key</label>
           <input
             :value="settingsStore.settings.openaiApiKey ?? ''"
             type="password"
             placeholder="sk-..."
-            class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            autocomplete="off"
+            class="input mt-1"
             @change="updateApiKey('openaiApiKey', ($event.target as HTMLInputElement).value)"
           />
         </div>
         <div v-if="settingsStore.settings.aiProvider === 'claude'">
-          <label class="text-xs text-gray-400">Claude API Key</label>
+          <label class="field-label">Claude API Key</label>
           <input
             :value="settingsStore.settings.claudeApiKey ?? ''"
             type="password"
             placeholder="sk-ant-..."
-            class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            autocomplete="off"
+            class="input mt-1"
             @change="updateApiKey('claudeApiKey', ($event.target as HTMLInputElement).value)"
           />
         </div>

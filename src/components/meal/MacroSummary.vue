@@ -19,7 +19,7 @@ const proteinPercent = computed(() => {
 </script>
 
 <template>
-  <div class="rounded-xl bg-white border border-gray-200 p-4">
+  <div class="card p-4">
     <h3 class="mb-3 text-sm font-medium text-gray-700">오늘 영양 합계</h3>
     <div class="grid grid-cols-4 gap-3 text-center">
       <div>

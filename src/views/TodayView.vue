@@ -3,6 +3,8 @@ import { ref, computed, watch } from 'vue'
 import { format } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import AppHeader from '@/components/layout/AppHeader.vue'
+import SavingIndicator from '@/components/common/SavingIndicator.vue'
+import CollapsibleSection from '@/components/common/CollapsibleSection.vue'
 import ExercisePicker from '@/components/workout/ExercisePicker.vue'
 import WorkoutCard from '@/components/workout/WorkoutCard.vue'
 import CategoryComparisonCard from '@/components/workout/CategoryComparisonCard.vue'
@@ -12,7 +14,8 @@ import MacroSummary from '@/components/meal/MacroSummary.vue'
 import { useDayLog } from '@/composables/useDayLog'
 import { useSettingsStore } from '@/stores/settings'
 import { getTodayCategoryComparisons, type CategoryComparison } from '@/services/insights/workoutStats'
-import { generateId, sumMacros, formatDateKey } from '@/utils/helpers'
+import { sumMacros, formatDateKey } from '@/utils/helpers'
+import { createWorkoutEntry, createCardioEntry, createMealEntry, countTotalSets } from '@/utils/entryFactories'
 import type { WorkoutEntry, CardioEntry, MealEntry, MealType } from '@/types/log'
 
 const today = formatDateKey(new Date())
@@ -26,10 +29,7 @@ const openSections = ref({ workout: true, cardio: true, meal: true })
 const categoryComparisons = ref<CategoryComparison[]>([])
 
 const macroTotals = computed(() => sumMacros(log.value.meals))
-
-const totalWorkoutSets = computed(() =>
-  log.value.workouts.reduce((sum, w) => sum + w.sets.length, 0),
-)
+const totalWorkoutSets = computed(() => countTotalSets(log.value.workouts))
 
 async function loadCategoryComparisons() {
   if (log.value.workouts.length === 0) {
@@ -46,12 +46,7 @@ watch(
 )
 
 function addWorkout(exerciseId: string, exerciseName: string) {
-  const entry: WorkoutEntry = {
-    id: generateId(),
-    exerciseId,
-    exerciseName,
-    sets: [{ weightKg: 0, reps: 10 }],
-  }
+  const entry = createWorkoutEntry(exerciseId, exerciseName)
   update((draft) => {
     draft.workouts.push(entry)
   }, true)
@@ -78,11 +73,7 @@ function moveWorkout(index: number, direction: -1 | 1) {
 }
 
 function addCardio() {
-  const entry: CardioEntry = {
-    id: generateId(),
-    type: 'running',
-    durationMin: 30,
-  }
+  const entry = createCardioEntry()
   update((draft) => {
     draft.cardio.push(entry)
   }, true)
@@ -101,15 +92,7 @@ function removeCardio(index: number) {
 }
 
 function addMeal(mealType: MealType = 'lunch') {
-  const entry: MealEntry = {
-    id: generateId(),
-    name: '',
-    calories: 0,
-    carbsG: 0,
-    proteinG: 0,
-    fatG: 0,
-    mealType,
-  }
+  const entry = createMealEntry(mealType)
   update((draft) => {
     draft.meals.push(entry)
   }, true)
@@ -132,109 +115,77 @@ function removeMeal(index: number) {
   <div>
     <AppHeader title="오늘" :subtitle="dateLabel" />
 
-    <p
-      v-if="saving"
-      class="sticky top-0 z-30 bg-primary-600 px-4 py-1 text-center text-xs text-white"
-    >
-      저장 중...
-    </p>
+    <SavingIndicator :saving="saving" />
 
     <div v-if="loading" class="p-8 text-center text-gray-400">불러오는 중...</div>
 
     <div v-else class="space-y-4 p-4 pb-24">
-      <!-- 운동 -->
-      <section class="rounded-2xl bg-white border border-gray-200 overflow-hidden">
-        <button
-          type="button"
-          class="flex w-full items-center justify-between px-4 py-3 text-left"
-          @click="openSections.workout = !openSections.workout"
-        >
-          <span class="font-medium">💪 운동 ({{ totalWorkoutSets }}세트)</span>
-          <span class="text-gray-400">{{ openSections.workout ? '▲' : '▼' }}</span>
+      <CollapsibleSection
+        v-model:open="openSections.workout"
+        title="💪 운동"
+        :badge="`${totalWorkoutSets}세트`"
+      >
+        <CategoryComparisonCard
+          v-for="comp in categoryComparisons"
+          :key="comp.category"
+          :comparison="comp"
+        />
+        <p v-if="!log.workouts.length" class="py-2 text-center text-sm text-gray-400">
+          아직 운동 기록이 없어요
+        </p>
+        <WorkoutCard
+          v-for="(workout, i) in log.workouts"
+          :key="workout.id"
+          :workout="workout"
+          :date="today"
+          :can-move-up="i > 0"
+          :can-move-down="i < log.workouts.length - 1"
+          @update="updateWorkout(i, $event)"
+          @remove="removeWorkout(i)"
+          @move-up="moveWorkout(i, -1)"
+          @move-down="moveWorkout(i, 1)"
+        />
+        <button type="button" class="btn-dashed-primary" @click="showPicker = true">
+          + 운동 추가
         </button>
-        <div v-show="openSections.workout" class="space-y-3 px-4 pb-4">
-          <CategoryComparisonCard
-            v-for="comp in categoryComparisons"
-            :key="comp.category"
-            :comparison="comp"
-          />
-          <WorkoutCard
-            v-for="(workout, i) in log.workouts"
-            :key="workout.id"
-            :workout="workout"
-            :date="today"
-            :can-move-up="i > 0"
-            :can-move-down="i < log.workouts.length - 1"
-            @update="updateWorkout(i, $event)"
-            @remove="removeWorkout(i)"
-            @move-up="moveWorkout(i, -1)"
-            @move-down="moveWorkout(i, 1)"
-          />
-          <button
-            type="button"
-            class="w-full rounded-xl border border-dashed border-primary-500 py-3 text-sm text-primary-600"
-            @click="showPicker = true"
-          >
-            + 운동 추가
-          </button>
-        </div>
-      </section>
+      </CollapsibleSection>
 
-      <!-- 유산소 -->
-      <section class="rounded-2xl bg-white border border-gray-200 overflow-hidden">
-        <button
-          type="button"
-          class="flex w-full items-center justify-between px-4 py-3 text-left"
-          @click="openSections.cardio = !openSections.cardio"
-        >
-          <span class="font-medium">🏃 유산소 ({{ log.cardio.length }})</span>
-          <span class="text-gray-400">{{ openSections.cardio ? '▲' : '▼' }}</span>
+      <CollapsibleSection
+        v-model:open="openSections.cardio"
+        title="🏃 유산소"
+        :badge="`${log.cardio.length}건`"
+      >
+        <CardioForm
+          v-for="(entry, i) in log.cardio"
+          :key="entry.id"
+          :entry="entry"
+          @update="updateCardio(i, $event)"
+          @remove="removeCardio(i)"
+        />
+        <button type="button" class="btn-dashed" @click="addCardio">
+          + 유산소 추가
         </button>
-        <div v-show="openSections.cardio" class="space-y-3 px-4 pb-4">
-          <CardioForm
-            v-for="(entry, i) in log.cardio"
-            :key="entry.id"
-            :entry="entry"
-            @update="updateCardio(i, $event)"
-            @remove="removeCardio(i)"
-          />
-          <button
-            type="button"
-            class="w-full rounded-xl border border-dashed border-gray-300 py-3 text-sm text-gray-500"
-            @click="addCardio"
-          >
-            + 유산소 추가
-          </button>
-        </div>
-      </section>
+      </CollapsibleSection>
 
-      <!-- 식단 -->
-      <section class="rounded-2xl bg-white border border-gray-200 overflow-hidden">
-        <button
-          type="button"
-          class="flex w-full items-center justify-between px-4 py-3 text-left"
-          @click="openSections.meal = !openSections.meal"
-        >
-          <span class="font-medium">🍽️ 식단 ({{ Math.round(macroTotals.calories) }}kcal)</span>
-          <span class="text-gray-400">{{ openSections.meal ? '▲' : '▼' }}</span>
-        </button>
-        <div v-show="openSections.meal" class="px-4 pb-4">
-          <MealGroupedList
-            :meals="log.meals"
-            :date="today"
-            @update="updateMeal"
-            @remove="removeMeal"
-            @manual-add="addMeal"
-          />
-        </div>
-      </section>
+      <CollapsibleSection
+        v-model:open="openSections.meal"
+        title="🍽️ 식단"
+        :badge="`${Math.round(macroTotals.calories)}kcal`"
+      >
+        <MealGroupedList
+          :meals="log.meals"
+          :date="today"
+          @update="updateMeal"
+          @remove="removeMeal"
+          @manual-add="addMeal"
+        />
+      </CollapsibleSection>
 
       <MacroSummary
         v-if="log.meals.length > 0"
         :totals="macroTotals"
         :targets="settingsStore.settings.dailyTargets"
       />
-
     </div>
 
     <ExercisePicker
