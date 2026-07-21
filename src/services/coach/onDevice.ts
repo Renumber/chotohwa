@@ -110,6 +110,16 @@ export async function isGemmaModelCached(): Promise<boolean> {
   return (await cache.match(GEMMA_MODEL_URL)) !== undefined
 }
 
+async function removeOpfsEntry(name: string): Promise<void> {
+  try {
+    const root = await navigator.storage.getDirectory()
+    await root.removeEntry(name)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotFoundError') return
+    throw error
+  }
+}
+
 function formatDownloadStatus(receivedBytes: number, totalBytes: number, resumed: boolean): string {
   const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100))
   const receivedGb = (receivedBytes / 1024 ** 3).toFixed(2)
@@ -208,6 +218,32 @@ type GemmaEngine = import('@litert-lm/core').Engine
 
 let enginePromise: Promise<GemmaEngine> | null = null
 
+/** 완성본과 이어받기 중인 파일을 모두 지워 다음 사용 시 처음부터 다시 받는다. */
+export async function clearGemmaModel(): Promise<void> {
+  const loadedEngine = enginePromise
+  enginePromise = null
+
+  if (loadedEngine) {
+    try {
+      await (await loadedEngine).delete()
+    } catch {
+      // 브라우저가 중단한 엔진은 이미 사용할 수 없으므로 저장 파일 정리를 계속한다.
+    }
+  }
+
+  if ('caches' in globalThis) {
+    const cache = await caches.open(MODEL_CACHE_NAME)
+    await cache.delete(GEMMA_MODEL_URL)
+  }
+
+  if ('storage' in navigator && 'getDirectory' in navigator.storage) {
+    await Promise.all([
+      removeOpfsEntry(GEMMA_MODEL_FILE),
+      removeOpfsEntry(GEMMA_METADATA_FILE),
+    ])
+  }
+}
+
 /** 엔진은 로드 비용이 커서 모듈 수준 싱글턴으로 유지한다. */
 async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
   if (!enginePromise) {
@@ -218,12 +254,28 @@ async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
           + '최신 Chrome/Edge를 사용하거나 외부 API를 연결해 주세요.',
         )
       }
-      const { Engine } = await import('@litert-lm/core')
+      hooks?.onStatus?.('LiteRT-LM 실행 환경 불러오는 중...')
+      const { Engine, Backend } = await import('@litert-lm/core')
       const model = await fetchModelSource(hooks)
-      hooks?.onStatus?.('모델 초기화 중... (수 초 소요)')
+      hooks?.onStatus?.('GPU 확인 및 모델 컴파일 중... (수 초 소요)')
       return Engine.create({
         model,
-        mainExecutorSettings: { maxNumTokens: 2048 },
+        backend: Backend.GPU_ARTISAN,
+        mainExecutorSettings: {
+          maxNumTokens: 2048,
+          backendConfig: {
+            num_output_candidates: 1,
+            wait_for_weight_uploads: true,
+            num_decode_steps_per_sync: 1,
+            sequence_batch_size: 0,
+            supported_lora_ranks: [],
+            max_top_k: 64,
+            enable_decode_logits: false,
+            enable_external_embeddings: false,
+            use_submodel: true,
+          },
+        },
+        benchmarkEnabled: false,
       })
     })()
     enginePromise.catch(() => {
@@ -238,6 +290,7 @@ export async function createGemmaChat(
   hooks?: ChatHooks,
 ): Promise<OnDeviceChatSession> {
   const engine = await getEngine(hooks)
+  hooks?.onStatus?.('대화 세션 준비 중...')
   const conversation = await engine.createConversation({
     preface: {
       messages: [{ role: 'system', content: systemPrompt }],

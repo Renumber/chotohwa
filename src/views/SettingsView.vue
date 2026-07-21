@@ -2,13 +2,15 @@
 import { ref, computed, onMounted } from 'vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import { useSettingsStore } from '@/stores/settings'
+import { useCoachChatStore } from '@/stores/coachChat'
 import { useAiExport } from '@/composables/useAiExport'
 import { exportBackup, downloadBackup, importBackup, parseBackupFile, type ImportMode } from '@/services/export/backup'
-import { getBuiltinAvailability, isWebGpuSupported, isGemmaModelCached, type BuiltinAvailability } from '@/services/coach/onDevice'
+import { clearGemmaModel, getBuiltinAvailability, isWebGpuSupported, isGemmaModelCached, type BuiltinAvailability } from '@/services/coach/onDevice'
 import { GOAL_LABELS } from '@/types/log'
 import type { FitnessGoal, AIProviderType } from '@/types/log'
 
 const settingsStore = useSettingsStore()
+const coachChatStore = useCoachChatStore()
 const { period, format: exportFormat, loading: exportLoading, toast, download, copy } = useAiExport()
 
 const importMode = ref<ImportMode>('merge')
@@ -20,6 +22,7 @@ let messageTimer: ReturnType<typeof setTimeout> | null = null
 const builtinAvailability = ref<BuiltinAvailability | null>(null)
 const webGpuSupported = ref(false)
 const gemmaCached = ref(false)
+const gemmaClearing = ref(false)
 
 const builtinHint = computed(() => {
   switch (builtinAvailability.value) {
@@ -102,6 +105,21 @@ function updateBodyWeight(value: number) {
 
 function updateAiProvider(provider: AIProviderType) {
   void settingsStore.save({ aiProvider: provider })
+}
+
+async function handleClearGemmaModel() {
+  if (gemmaClearing.value) return
+  gemmaClearing.value = true
+  try {
+    await coachChatStore.reset()
+    await clearGemmaModel()
+    gemmaCached.value = false
+    showMessage('저장된 Gemma 모델을 삭제했습니다.')
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Gemma 모델 삭제 실패')
+  } finally {
+    gemmaClearing.value = false
+  }
 }
 
 function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
@@ -280,6 +298,22 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
         >
           {{ gemmaHint }}
         </p>
+        <div
+          v-if="settingsStore.settings.aiProvider === 'gemma'"
+          class="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2"
+        >
+          <p class="text-xs text-gray-500">
+            문제가 생기면 모델을 지운 뒤 처음부터 다시 받을 수 있습니다.
+          </p>
+          <button
+            type="button"
+            class="btn-secondary shrink-0 px-3 py-2 text-xs"
+            :disabled="gemmaClearing"
+            @click="handleClearGemmaModel"
+          >
+            {{ gemmaClearing ? '삭제 중...' : '저장 모델 삭제' }}
+          </button>
+        </div>
         <p
           v-if="settingsStore.settings.aiProvider === 'builtin' || settingsStore.settings.aiProvider === 'gemma'"
           class="text-xs text-gray-400"
