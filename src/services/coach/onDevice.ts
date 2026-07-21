@@ -223,7 +223,7 @@ async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
       hooks?.onStatus?.('모델 초기화 중... (수 초 소요)')
       return Engine.create({
         model,
-        mainExecutorSettings: { maxNumTokens: 4096 },
+        mainExecutorSettings: { maxNumTokens: 2048 },
       })
     })()
     enginePromise.catch(() => {
