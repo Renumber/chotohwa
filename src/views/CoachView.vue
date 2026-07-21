@@ -136,7 +136,7 @@ function sendQuick(prompt: string) {
     </div>
 
     <!-- 입력 바 -->
-    <div class="border-t border-gray-200 bg-white p-3 pb-[calc(0.75rem+56px)]">
+    <div class="border-t border-gray-200 bg-white p-3 pb-[var(--app-nav-height)]">
       <div class="flex items-end gap-2">
         <button
           v-if="chatStore.messages.length"

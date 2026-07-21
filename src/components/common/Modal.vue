@@ -49,7 +49,7 @@ onBeforeUnmount(() => {
         @click.self="emit('close')"
       >
         <div
-          class="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white p-4 sm:rounded-2xl"
+          class="w-full max-w-lg max-h-[85dvh] overflow-y-auto rounded-t-2xl bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:rounded-2xl"
         >
           <div class="mb-4 flex items-center justify-between">
             <h2 class="text-lg font-bold">{{ title }}</h2>

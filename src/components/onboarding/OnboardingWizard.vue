@@ -68,8 +68,8 @@ async function skip() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
-    <div class="w-full max-w-md rounded-2xl bg-white p-6 space-y-5">
+  <div class="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(1rem+env(safe-area-inset-bottom))]">
+    <div class="max-h-full w-full max-w-md space-y-5 overflow-y-auto rounded-2xl bg-white p-6">
       <!-- 진행 표시 -->
       <div class="flex items-center justify-between">
         <div class="flex gap-1.5">

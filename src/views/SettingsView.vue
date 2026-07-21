@@ -113,7 +113,7 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
   <div>
     <AppHeader title="설정" />
 
-    <div class="space-y-6 p-4 pb-24">
+    <div class="space-y-6 p-4 pb-[calc(var(--app-nav-height)+1rem)]">
       <Transition
         enter-active-class="transition-opacity duration-150"
         enter-from-class="opacity-0"

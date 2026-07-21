@@ -6,7 +6,7 @@ defineProps<{
 </script>
 
 <template>
-  <header class="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur px-4 py-3">
+  <header class="sticky top-0 z-40 border-b border-gray-200 bg-white/95 px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 backdrop-blur">
     <h1 class="text-lg font-bold text-gray-900">{{ title }}</h1>
     <p v-if="subtitle" class="text-sm text-gray-500">{{ subtitle }}</p>
   </header>

@@ -119,7 +119,7 @@ function removeMeal(index: number) {
 
     <div v-if="loading" class="p-8 text-center text-gray-400">불러오는 중...</div>
 
-    <div v-else class="space-y-4 p-4 pb-24">
+    <div v-else class="space-y-4 p-4 pb-[calc(var(--app-nav-height)+1rem)]">
       <CollapsibleSection
         v-model:open="openSections.workout"
         title="💪 운동"

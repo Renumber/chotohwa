@@ -148,7 +148,7 @@ async function refresh() {
 
     <SavingIndicator :saving="saving" />
 
-    <div class="space-y-4 p-4 pb-24">
+    <div class="space-y-4 p-4 pb-[calc(var(--app-nav-height)+1rem)]">
       <WeeklyMealPanel />
 
       <div v-if="weeklySummary" class="card p-4">

@@ -8,22 +8,25 @@
   --color-primary-700: #15803d;
 }
 
+:root {
+  --app-nav-height: calc(63px + env(safe-area-inset-bottom));
+}
+
 html {
   -webkit-tap-highlight-color: transparent;
 }
 
 body {
   @apply bg-gray-200 text-gray-900 antialiased;
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* 데스크탑: 좌우 여백(gray-200) + 중앙 앱 프레임(gray-100) */
 .app-shell {
-  @apply min-h-screen bg-gray-200;
+  @apply min-h-dvh bg-gray-200;
 }
 
 .app-frame {
-  @apply relative mx-auto min-h-screen w-full max-w-lg bg-gray-100;
+  @apply relative mx-auto min-h-dvh w-full max-w-lg bg-gray-100;
 }
 
 @media (min-width: 1024px) {

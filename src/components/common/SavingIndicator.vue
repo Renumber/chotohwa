@@ -13,7 +13,7 @@ defineProps<{
   >
     <p
       v-if="saving"
-      class="pointer-events-none fixed top-0 left-1/2 z-[60] w-full max-w-lg -translate-x-1/2 bg-primary-600 px-4 py-1 text-center text-xs text-white"
+      class="pointer-events-none fixed top-[env(safe-area-inset-top)] left-1/2 z-[60] w-full max-w-lg -translate-x-1/2 bg-primary-600 px-4 py-1 text-center text-xs text-white"
     >
       저장 중...
     </p>
