@@ -262,7 +262,7 @@ async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
         model,
         backend: Backend.GPU_ARTISAN,
         mainExecutorSettings: {
-          maxNumTokens: 4096,
+          maxNumTokens: 2048,
           backendConfig: {
             num_output_candidates: 1,
             wait_for_weight_uploads: true,
@@ -290,29 +290,63 @@ export async function createGemmaChat(
   hooks?: ChatHooks,
 ): Promise<OnDeviceChatSession> {
   const engine = await getEngine(hooks)
-  hooks?.onStatus?.('대화 세션 준비 중...')
-  const conversation = await engine.createConversation({
-    preface: {
-      messages: [{ role: 'system', content: systemPrompt }],
-    },
+  const createConversation = () => engine.createConversation({
+    preface: { messages: [{ role: 'system', content: systemPrompt }] },
   })
+  const isContextLimitError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    return /token ids are too long|maximum number of tokens|context length/i.test(message)
+  }
+
+  hooks?.onStatus?.('대화 세션 준비 중...')
+  let conversation = await createConversation()
+
+  async function resetConversation(statusHooks?: ChatHooks) {
+    statusHooks?.onStatus?.('대화가 길어져 컨텍스트를 정리하는 중...')
+    const oldConversation = conversation
+    conversation = await createConversation()
+    try {
+      await oldConversation.delete()
+    } catch {
+      // 이미 종료된 세션 정리 실패는 무시한다.
+    }
+  }
+
+  async function generate(text: string, sendHooks?: ChatHooks): Promise<string> {
+    let result = ''
+    const stream = conversation.sendMessageStreaming(text)
+    for await (const chunk of stream) {
+      const parts = typeof chunk.content === 'string'
+        ? [{ type: 'text' as const, text: chunk.content }]
+        : chunk.content ?? []
+      for (const part of parts) {
+        if (part.type === 'text') {
+          result += part.text
+          sendHooks?.onToken?.(result)
+        }
+      }
+    }
+    return result || '응답을 받지 못했습니다.'
+  }
 
   return {
     async send(text, sendHooks) {
-      let result = ''
-      const stream = conversation.sendMessageStreaming(text)
-      for await (const chunk of stream) {
-        const parts = typeof chunk.content === 'string'
-          ? [{ type: 'text' as const, text: chunk.content }]
-          : chunk.content ?? []
-        for (const part of parts) {
-          if (part.type === 'text') {
-            result += part.text
-            sendHooks?.onToken?.(result)
-          }
+      if (await conversation.getTokenCount() > 1400) {
+        await resetConversation(sendHooks)
+      }
+
+      try {
+        return await generate(text, sendHooks)
+      } catch (error) {
+        if (!isContextLimitError(error)) throw error
+        await resetConversation(sendHooks)
+        try {
+          return await generate(text, sendHooks)
+        } catch (retryError) {
+          if (!isContextLimitError(retryError)) throw retryError
+          throw new Error('질문이 너무 깁니다. 내용을 짧게 나누어 다시 입력해 주세요.')
         }
       }
-      return result || '응답을 받지 못했습니다.'
     },
     async destroy() {
       await conversation.delete()

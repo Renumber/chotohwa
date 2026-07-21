@@ -1,4 +1,4 @@
-import type { AppSettings, FitnessGoal } from '@/types/log'
+import type { AppSettings, CoachContext, FitnessGoal } from '@/types/log'
 import { GOAL_LABELS } from '@/types/log'
 import { buildCoachContext } from './aggregator'
 import {
@@ -92,6 +92,60 @@ function buildSystemPrompt(settings: AppSettings, contextMd: string): string {
   ].join('\n')
 }
 
+const GEMMA_SYSTEM_PROMPT_MAX_CHARS = 1400
+
+function compactText(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}…`
+}
+
+/** 모바일의 작은 컨텍스트에서도 동작하도록 기록 원문 대신 핵심 수치만 전달한다. */
+function buildGemmaSystemPrompt(settings: AppSettings, ctx: CoachContext): string {
+  const { summary } = ctx
+  const weight = settings.bodyWeightKg ? `${settings.bodyWeightKg}kg` : '미입력'
+  const targets = [
+    settings.dailyTargets?.calories ? `${settings.dailyTargets.calories}kcal` : '',
+    settings.dailyTargets?.proteinG ? `단백질 ${settings.dailyTargets.proteinG}g` : '',
+  ].filter(Boolean).join(', ') || '미설정'
+  const topExercises = Object.entries(summary.exerciseFrequency)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, count]) => `${compactText(name, 18)} ${count}회`)
+    .join(', ')
+
+  const lines = [
+    '너는 한국어 개인 헬스 코치다. 기록을 근거로 짧고 실행 가능하게 답하고, 잘한 점 다음에 개선점을 말한다.',
+    '목표·칼로리·단백질 설정 변경을 제안할 때만 답변 끝에 ```settings 형식의 JSON을 넣는다.',
+    '형식: ```settings\n{"goal":"lean_bulk|cut|maintain","calories":2400,"proteinG":140}\n```',
+    `프로필: 목표=${GOAL_LABELS[settings.goal]}, 체중=${weight}, 일일목표=${targets}`,
+    `최근 7일 요약: 기록 ${summary.totalDays}일, 운동 ${summary.workoutDays}일, 평균 ${Math.round(summary.avgCalories)}kcal/단백질 ${Math.round(summary.avgProteinG)}g, 유산소 ${summary.totalCardioMin}분`,
+  ]
+
+  if (topExercises) lines.push(`운동 빈도: ${topExercises}`)
+  lines.push('최근 기록:')
+
+  for (const day of [...ctx.dailyLogs].reverse()) {
+    const details: string[] = []
+    if (day.workouts.length) {
+      const workouts = day.workouts.slice(0, 4).map((workout) => (
+        `${compactText(workout.name, 16)} ${compactText(workout.sets, 70)}`
+      ))
+      details.push(`운동 ${workouts.join('; ')}`)
+    }
+    if (day.cardio.length) {
+      details.push(`유산소 ${day.cardio.map((cardio) => `${cardio.type} ${cardio.durationMin}분`).join(', ')}`)
+    }
+    if (day.meals.length) {
+      details.push(`식단합계 ${Math.round(day.totals.calories)}kcal/단백질 ${Math.round(day.totals.proteinG)}g`)
+    }
+
+    const line = `- ${day.date}: ${details.join(' | ') || '기록 없음'}`
+    if ([...lines, line].join('\n').length > GEMMA_SYSTEM_PROMPT_MAX_CHARS) break
+    lines.push(line)
+  }
+
+  return lines.join('\n')
+}
+
 function createMockChat(): CoachChatSession {
   let analyzed = false
   return {
@@ -136,21 +190,22 @@ function createHttpChat(
 
 /**
  * 현재 설정에 맞는 코치 채팅 세션을 만든다.
- * 시스템 프롬프트에 최근 30일 기록·목표가 컨텍스트로 포함된다.
+ * Gemma에는 압축한 7일 기록을, 그 외 AI에는 30일 기록을 컨텍스트로 포함한다.
  */
 export async function createCoachChat(hooks?: ChatHooks): Promise<CoachChatSession> {
   const settings = await getSettings()
   hooks?.onStatus?.('기록 데이터 준비 중...')
-  const ctx = await buildCoachContext(30)
-  const contextMd = toMarkdown(ctx)
-  const systemPrompt = buildSystemPrompt(settings, contextMd)
 
   switch (settings.aiProvider) {
     case 'builtin': {
+      const ctx = await buildCoachContext(30)
+      const systemPrompt = buildSystemPrompt(settings, toMarkdown(ctx))
       const { createBuiltinChat } = await import('./onDevice')
       return createBuiltinChat(systemPrompt, hooks)
     }
     case 'gemma': {
+      const ctx = await buildCoachContext(7)
+      const systemPrompt = buildGemmaSystemPrompt(settings, ctx)
       const { createGemmaChat } = await import('./onDevice')
       return createGemmaChat(systemPrompt, hooks)
     }
@@ -158,12 +213,16 @@ export async function createCoachChat(hooks?: ChatHooks): Promise<CoachChatSessi
       if (!settings.openaiApiKey) {
         throw new Error('OpenAI API 키가 설정되지 않았습니다. 설정에서 입력해 주세요.')
       }
+      const ctx = await buildCoachContext(30)
+      const systemPrompt = buildSystemPrompt(settings, toMarkdown(ctx))
       return createHttpChat('openai', settings.openaiApiKey, systemPrompt)
     }
     case 'claude': {
       if (!settings.claudeApiKey) {
         throw new Error('Claude API 키가 설정되지 않았습니다. 설정에서 입력해 주세요.')
       }
+      const ctx = await buildCoachContext(30)
+      const systemPrompt = buildSystemPrompt(settings, toMarkdown(ctx))
       return createHttpChat('claude', settings.claudeApiKey, systemPrompt)
     }
     default:
