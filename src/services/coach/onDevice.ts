@@ -72,59 +72,136 @@ export const GEMMA_MODEL_URL =
   'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm'
 
 const MODEL_CACHE_NAME = 'ondevice-llm-models'
+const GEMMA_MODEL_FILE = 'gemma-4-E2B-it-web.litertlm'
+const GEMMA_METADATA_FILE = `${GEMMA_MODEL_FILE}.json`
+
+interface GemmaDownloadMetadata {
+  url: string
+  etag: string | null
+  totalBytes: number
+  complete: boolean
+}
+
+type ModelDownloadWorkerResponse =
+  | { type: 'progress'; receivedBytes: number; totalBytes: number; resumed: boolean }
+  | { type: 'complete'; totalBytes: number }
+  | { type: 'error'; message: string }
 
 export function isWebGpuSupported(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator
 }
 
 export async function isGemmaModelCached(): Promise<boolean> {
+  if ('storage' in navigator && 'getDirectory' in navigator.storage) {
+    try {
+      const root = await navigator.storage.getDirectory()
+      const metadataHandle = await root.getFileHandle(GEMMA_METADATA_FILE)
+      const metadata = JSON.parse(await (await metadataHandle.getFile()).text()) as GemmaDownloadMetadata
+      const modelHandle = await root.getFileHandle(GEMMA_MODEL_FILE)
+      const modelFile = await modelHandle.getFile()
+      if (metadata.complete && modelFile.size === metadata.totalBytes) return true
+    } catch {
+      // 완성된 OPFS 모델이 없으면 이전 Cache Storage 형식도 확인한다.
+    }
+  }
+
   if (!('caches' in globalThis)) return false
   const cache = await caches.open(MODEL_CACHE_NAME)
   return (await cache.match(GEMMA_MODEL_URL)) !== undefined
 }
 
-/** Cache Storage 경유로 모델을 받아 재방문 시 재다운로드를 피한다. */
-async function fetchModelBlob(hooks?: ChatHooks): Promise<Blob> {
+function formatDownloadStatus(receivedBytes: number, totalBytes: number, resumed: boolean): string {
+  const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100))
+  const receivedGb = (receivedBytes / 1024 ** 3).toFixed(2)
+  const totalGb = (totalBytes / 1024 ** 3).toFixed(2)
+  const prefix = resumed ? 'Gemma 모델 이어받는 중' : 'Gemma 모델 다운로드 중'
+  return `${prefix}... ${pct}% (${receivedGb}/${totalGb}GB)`
+}
+
+async function getOpfsModelFile(): Promise<File> {
+  const root = await navigator.storage.getDirectory()
+  const handle = await root.getFileHandle(GEMMA_MODEL_FILE)
+  return handle.getFile()
+}
+
+async function getOpfsModelSize(): Promise<number> {
+  try {
+    return (await getOpfsModelFile()).size
+  } catch {
+    return 0
+  }
+}
+
+async function downloadModelToOpfs(hooks?: ChatHooks): Promise<File> {
+  if (!('storage' in navigator) || !('getDirectory' in navigator.storage)) {
+    throw new Error('이 브라우저는 중단 가능한 모델 저장소를 지원하지 않습니다. 최신 Chrome을 사용해 주세요.')
+  }
+
+  const estimate = await navigator.storage.estimate()
+  const available = (estimate.quota ?? 0) - (estimate.usage ?? 0)
+  const partialSize = await getOpfsModelSize()
+  const minimumRequired = Math.max(0, 2.1 * 1024 ** 3 - partialSize)
+  if (estimate.quota && available < minimumRequired) {
+    throw new Error('Gemma 모델을 저장할 공간이 부족합니다. 기기 저장 공간을 확보해 주세요.')
+  }
+
+  try {
+    await navigator.storage.persist()
+  } catch {
+    // 영구 저장 권한이 없어도 OPFS 다운로드와 이어받기는 동작한다.
+  }
+
+  return new Promise<File>((resolve, reject) => {
+    const worker = new Worker(new URL('../../workers/modelDownload.worker.ts', import.meta.url), {
+      type: 'module',
+    })
+
+    worker.addEventListener('message', (event: MessageEvent<ModelDownloadWorkerResponse>) => {
+      const message = event.data
+      if (message.type === 'progress') {
+        hooks?.onStatus?.(formatDownloadStatus(
+          message.receivedBytes,
+          message.totalBytes,
+          message.resumed,
+        ))
+        return
+      }
+
+      worker.terminate()
+      if (message.type === 'error') {
+        reject(new Error(message.message))
+        return
+      }
+
+      void getOpfsModelFile().then(resolve, reject)
+    })
+
+    worker.addEventListener('error', (event) => {
+      worker.terminate()
+      reject(new Error(event.message || '모델 다운로드 작업이 중단되었습니다.'))
+    })
+
+    worker.postMessage({
+      type: 'download',
+      url: GEMMA_MODEL_URL,
+      fileName: GEMMA_MODEL_FILE,
+      metadataFileName: GEMMA_METADATA_FILE,
+    })
+  })
+}
+
+/** OPFS에 모델을 내려받아 중단 후에도 이어받고, 디스크 기반 스트림으로 로드한다. */
+async function fetchModelSource(hooks?: ChatHooks): Promise<Blob | ReadableStream<Uint8Array>> {
   const cache = 'caches' in globalThis ? await caches.open(MODEL_CACHE_NAME) : null
 
   const cached = await cache?.match(GEMMA_MODEL_URL)
-  if (cached) {
+  if (cached?.body) {
     hooks?.onStatus?.('캐시된 모델 로드 중...')
-    return cached.blob()
+    return cached.body
   }
 
-  hooks?.onStatus?.('Gemma 모델 다운로드 중... (약 2GB, 최초 1회)')
-  const response = await fetch(GEMMA_MODEL_URL)
-  if (!response.ok || !response.body) {
-    throw new Error(`모델 다운로드 실패: ${response.status}`)
-  }
-
-  const total = Number(response.headers.get('Content-Length')) || 0
-  const reader = response.body.getReader()
-  const chunks: BlobPart[] = []
-  let received = 0
-
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-    received += value.byteLength
-    if (total > 0) {
-      const pct = Math.round((received / total) * 100)
-      const gb = (received / 1024 ** 3).toFixed(2)
-      hooks?.onStatus?.(`Gemma 모델 다운로드 중... ${pct}% (${gb}GB)`)
-    }
-  }
-
-  const blob = new Blob(chunks)
-  if (cache) {
-    try {
-      await cache.put(GEMMA_MODEL_URL, new Response(blob))
-    } catch {
-      // 저장 공간 부족 등으로 캐시 실패해도 이번 실행은 진행
-    }
-  }
-  return blob
+  hooks?.onStatus?.('Gemma 모델 다운로드 준비 중... (약 2GB)')
+  return downloadModelToOpfs(hooks)
 }
 
 type GemmaEngine = import('@litert-lm/core').Engine
@@ -142,11 +219,11 @@ async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
         )
       }
       const { Engine } = await import('@litert-lm/core')
-      const blob = await fetchModelBlob(hooks)
+      const model = await fetchModelSource(hooks)
       hooks?.onStatus?.('모델 초기화 중... (수 초 소요)')
       return Engine.create({
-        model: blob,
-        mainExecutorSettings: { maxNumTokens: 8192 },
+        model,
+        mainExecutorSettings: { maxNumTokens: 4096 },
       })
     })()
     enginePromise.catch(() => {

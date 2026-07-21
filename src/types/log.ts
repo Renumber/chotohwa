@@ -154,7 +154,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   id: 'app',
   goal: 'maintain',
   dailyTargets: {},
-  aiProvider: 'mock',
+  aiProvider: 'gemma',
 }
 
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {
