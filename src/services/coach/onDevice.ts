@@ -262,7 +262,7 @@ async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
         model,
         backend: Backend.GPU_ARTISAN,
         mainExecutorSettings: {
-          maxNumTokens: 2048,
+          maxNumTokens: 4096,
           backendConfig: {
             num_output_candidates: 1,
             wait_for_weight_uploads: true,
