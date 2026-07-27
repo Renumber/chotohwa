@@ -333,6 +333,19 @@ async function getEngine(
       hooks?.onStatus?.('LiteRT-LM 실행 환경 불러오는 중...')
       const { Engine, Backend } = await import('@litert-lm/core')
       const model = await fetchModelSource(config, hooks)
+      if (config.id === 'qwen') {
+        hooks?.onStatus?.('Qwen 모델 압축 해제 및 GPU 초기화 중... (수 초 소요)')
+        return Engine.create({
+          model,
+          // Qwen의 HF_Tokenizer_Zlib 섹션은 GPU_ARTISAN 스트리밍 로더가 지원하지 않는다.
+          backend: Backend.GPU,
+          mainExecutorSettings: {
+            maxNumTokens: 2048,
+          },
+          benchmarkEnabled: false,
+        })
+      }
+
       hooks?.onStatus?.('GPU 확인 및 모델 컴파일 중... (수 초 소요)')
       return Engine.create({
         model,
