@@ -5,7 +5,16 @@ import { useSettingsStore } from '@/stores/settings'
 import { useCoachChatStore } from '@/stores/coachChat'
 import { useAiExport } from '@/composables/useAiExport'
 import { exportBackup, downloadBackup, importBackup, parseBackupFile, type ImportMode } from '@/services/export/backup'
-import { clearGemmaModel, getBuiltinAvailability, isWebGpuSupported, isGemmaModelCached, type BuiltinAvailability } from '@/services/coach/onDevice'
+import {
+  clearGemmaModel,
+  clearQwenModel,
+  getBuiltinAvailability,
+  isGemmaModelCached,
+  isQwenModelCached,
+  isWebGpuSupported,
+  releaseOnDeviceEngine,
+  type BuiltinAvailability,
+} from '@/services/coach/onDevice'
 import { GOAL_LABELS } from '@/types/log'
 import type { FitnessGoal, AIProviderType } from '@/types/log'
 
@@ -22,7 +31,8 @@ let messageTimer: ReturnType<typeof setTimeout> | null = null
 const builtinAvailability = ref<BuiltinAvailability | null>(null)
 const webGpuSupported = ref(false)
 const gemmaCached = ref(false)
-const gemmaClearing = ref(false)
+const qwenCached = ref(false)
+const clearingModel = ref<'gemma' | 'qwen' | null>(null)
 
 const builtinHint = computed(() => {
   switch (builtinAvailability.value) {
@@ -49,11 +59,21 @@ const gemmaHint = computed(() => {
     : 'ℹ️ 최초 사용 시 Gemma 4 E2B 모델(약 2GB)을 다운로드합니다. Wi-Fi 환경을 권장합니다'
 })
 
+const qwenHint = computed(() => {
+  if (!webGpuSupported.value) {
+    return '⚠️ WebGPU 미지원 브라우저 — 온디바이스 Qwen을 사용할 수 없습니다'
+  }
+  return qwenCached.value
+    ? '✅ 모델 다운로드 완료 (기기에 저장됨)'
+    : 'ℹ️ 최초 사용 시 Qwen3 0.6B INT4 모델(약 500MB)을 다운로드합니다'
+})
+
 onMounted(() => {
   void settingsStore.load()
   void getBuiltinAvailability().then((a) => { builtinAvailability.value = a })
   webGpuSupported.value = isWebGpuSupported()
   void isGemmaModelCached().then((cached) => { gemmaCached.value = cached })
+  void isQwenModelCached().then((cached) => { qwenCached.value = cached })
 })
 
 function showMessage(text: string) {
@@ -103,22 +123,30 @@ function updateBodyWeight(value: number) {
   void settingsStore.save({ bodyWeightKg: value || undefined })
 }
 
-function updateAiProvider(provider: AIProviderType) {
-  void settingsStore.save({ aiProvider: provider })
+async function updateAiProvider(provider: AIProviderType) {
+  await coachChatStore.reset()
+  await releaseOnDeviceEngine()
+  await settingsStore.save({ aiProvider: provider })
 }
 
-async function handleClearGemmaModel() {
-  if (gemmaClearing.value) return
-  gemmaClearing.value = true
+async function handleClearOnDeviceModel(model: 'gemma' | 'qwen') {
+  if (clearingModel.value) return
+  clearingModel.value = model
   try {
     await coachChatStore.reset()
-    await clearGemmaModel()
-    gemmaCached.value = false
-    showMessage('저장된 Gemma 모델을 삭제했습니다.')
+    if (model === 'gemma') {
+      await clearGemmaModel()
+      gemmaCached.value = false
+    } else {
+      await clearQwenModel()
+      qwenCached.value = false
+    }
+    const label = model === 'gemma' ? 'Gemma' : 'Qwen'
+    showMessage(`저장된 ${label} 모델을 삭제했습니다.`)
   } catch (error) {
-    showMessage(error instanceof Error ? error.message : 'Gemma 모델 삭제 실패')
+    showMessage(error instanceof Error ? error.message : '모델 삭제 실패')
   } finally {
-    gemmaClearing.value = false
+    clearingModel.value = null
   }
 }
 
@@ -280,8 +308,9 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
           class="input"
           @change="updateAiProvider(($event.target as HTMLSelectElement).value as AIProviderType)"
         >
-          <option value="mock">규칙 기반 (기본)</option>
+          <option value="mock">규칙 기반</option>
           <option value="builtin">브라우저 내장 AI — Gemini Nano (온디바이스)</option>
+          <option value="qwen">Qwen3 0.6B INT4 (온디바이스, 기본)</option>
           <option value="gemma">Gemma 4 E2B (온디바이스, WebGPU)</option>
           <option value="openai">OpenAI (외부 API)</option>
           <option value="claude">Claude (외부 API)</option>
@@ -298,8 +327,14 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
         >
           {{ gemmaHint }}
         </p>
+        <p
+          v-if="settingsStore.settings.aiProvider === 'qwen'"
+          class="text-xs text-gray-500"
+        >
+          {{ qwenHint }}
+        </p>
         <div
-          v-if="settingsStore.settings.aiProvider === 'gemma'"
+          v-if="settingsStore.settings.aiProvider === 'gemma' || settingsStore.settings.aiProvider === 'qwen'"
           class="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2"
         >
           <p class="text-xs text-gray-500">
@@ -308,14 +343,14 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
           <button
             type="button"
             class="btn-secondary shrink-0 px-3 py-2 text-xs"
-            :disabled="gemmaClearing"
-            @click="handleClearGemmaModel"
+            :disabled="clearingModel !== null"
+            @click="handleClearOnDeviceModel(settingsStore.settings.aiProvider as 'gemma' | 'qwen')"
           >
-            {{ gemmaClearing ? '삭제 중...' : '저장 모델 삭제' }}
+            {{ clearingModel ? '삭제 중...' : '저장 모델 삭제' }}
           </button>
         </div>
         <p
-          v-if="settingsStore.settings.aiProvider === 'builtin' || settingsStore.settings.aiProvider === 'gemma'"
+          v-if="settingsStore.settings.aiProvider === 'builtin' || settingsStore.settings.aiProvider === 'gemma' || settingsStore.settings.aiProvider === 'qwen'"
           class="text-xs text-gray-400"
         >
           온디바이스 AI는 데이터가 기기를 벗어나지 않습니다. API 키도 필요 없습니다.

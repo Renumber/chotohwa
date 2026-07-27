@@ -49,7 +49,20 @@ export async function saveDayLog(log: DayLog): Promise<void> {
 
 export async function getSettings(): Promise<AppSettings> {
   const settings = await db.settings.get('app')
-  return settings ?? { ...DEFAULT_SETTINGS }
+  if (!settings) return { ...DEFAULT_SETTINGS }
+
+  if (!settings.aiProviderDefaultsVersion) {
+    // 이전 기본값이던 Gemma만 Qwen으로 옮기고 사용자가 고른 다른 제공자는 유지한다.
+    const migrated: AppSettings = {
+      ...settings,
+      aiProvider: settings.aiProvider === 'gemma' ? 'qwen' : settings.aiProvider,
+      aiProviderDefaultsVersion: 2,
+    }
+    await db.settings.put(migrated)
+    return migrated
+  }
+
+  return settings
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

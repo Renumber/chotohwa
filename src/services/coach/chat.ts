@@ -92,14 +92,14 @@ function buildSystemPrompt(settings: AppSettings, contextMd: string): string {
   ].join('\n')
 }
 
-const GEMMA_SYSTEM_PROMPT_MAX_CHARS = 1400
+const ON_DEVICE_SYSTEM_PROMPT_MAX_CHARS = 1400
 
 function compactText(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}…`
 }
 
 /** 모바일의 작은 컨텍스트에서도 동작하도록 기록 원문 대신 핵심 수치만 전달한다. */
-function buildGemmaSystemPrompt(settings: AppSettings, ctx: CoachContext): string {
+function buildOnDeviceSystemPrompt(settings: AppSettings, ctx: CoachContext): string {
   const { summary } = ctx
   const weight = settings.bodyWeightKg ? `${settings.bodyWeightKg}kg` : '미입력'
   const targets = [
@@ -139,7 +139,7 @@ function buildGemmaSystemPrompt(settings: AppSettings, ctx: CoachContext): strin
     }
 
     const line = `- ${day.date}: ${details.join(' | ') || '기록 없음'}`
-    if ([...lines, line].join('\n').length > GEMMA_SYSTEM_PROMPT_MAX_CHARS) break
+    if ([...lines, line].join('\n').length > ON_DEVICE_SYSTEM_PROMPT_MAX_CHARS) break
     lines.push(line)
   }
 
@@ -190,7 +190,7 @@ function createHttpChat(
 
 /**
  * 현재 설정에 맞는 코치 채팅 세션을 만든다.
- * Gemma에는 압축한 7일 기록을, 그 외 AI에는 30일 기록을 컨텍스트로 포함한다.
+ * 온디바이스 모델에는 압축한 7일 기록을, 그 외 AI에는 30일 기록을 컨텍스트로 포함한다.
  */
 export async function createCoachChat(hooks?: ChatHooks): Promise<CoachChatSession> {
   const settings = await getSettings()
@@ -205,9 +205,15 @@ export async function createCoachChat(hooks?: ChatHooks): Promise<CoachChatSessi
     }
     case 'gemma': {
       const ctx = await buildCoachContext(7)
-      const systemPrompt = buildGemmaSystemPrompt(settings, ctx)
+      const systemPrompt = buildOnDeviceSystemPrompt(settings, ctx)
       const { createGemmaChat } = await import('./onDevice')
       return createGemmaChat(systemPrompt, hooks)
+    }
+    case 'qwen': {
+      const ctx = await buildCoachContext(7)
+      const systemPrompt = buildOnDeviceSystemPrompt(settings, ctx)
+      const { createQwenChat } = await import('./onDevice')
+      return createQwenChat(systemPrompt, hooks)
     }
     case 'openai': {
       if (!settings.openaiApiKey) {

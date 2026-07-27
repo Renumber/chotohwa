@@ -27,7 +27,7 @@ export async function createBuiltinChat(
     throw new Error(
       '이 브라우저는 내장 AI(Prompt API)를 지원하지 않습니다. '
       + '데스크탑 Chrome 138+ 에서 사용 가능하며, 모바일은 아직 지원되지 않습니다. '
-      + '온디바이스 Gemma 또는 외부 API를 사용해 보세요.',
+      + '온디바이스 Qwen/Gemma 또는 외부 API를 사용해 보세요.',
     )
   }
 
@@ -66,16 +66,48 @@ export async function createBuiltinChat(
   }
 }
 
-// ---- 온디바이스 Gemma (LiteRT-LM, WebGPU) ----
+// ---- 온디바이스 모델 (LiteRT-LM, WebGPU) ----
 
 export const GEMMA_MODEL_URL =
   'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm'
+export const QWEN_MODEL_URL =
+  'https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/qwen3_0_6b_mixed_int4.litertlm'
+
+type OnDeviceModelId = 'gemma' | 'qwen'
+
+interface OnDeviceModelConfig {
+  id: OnDeviceModelId
+  label: string
+  url: string
+  fileName: string
+  expectedBytes: number
+  downloadSizeLabel: string
+  noThink: boolean
+}
 
 const MODEL_CACHE_NAME = 'ondevice-llm-models'
-const GEMMA_MODEL_FILE = 'gemma-4-E2B-it-web.litertlm'
-const GEMMA_METADATA_FILE = `${GEMMA_MODEL_FILE}.json`
+const MODEL_CONFIGS: Record<OnDeviceModelId, OnDeviceModelConfig> = {
+  gemma: {
+    id: 'gemma',
+    label: 'Gemma',
+    url: GEMMA_MODEL_URL,
+    fileName: 'gemma-4-E2B-it-web.litertlm',
+    expectedBytes: 2.1 * 1024 ** 3,
+    downloadSizeLabel: '약 2GB',
+    noThink: false,
+  },
+  qwen: {
+    id: 'qwen',
+    label: 'Qwen',
+    url: QWEN_MODEL_URL,
+    fileName: 'qwen3-0.6b-mixed-int4.litertlm',
+    expectedBytes: 500 * 1024 ** 2,
+    downloadSizeLabel: '약 500MB',
+    noThink: true,
+  },
+}
 
-interface GemmaDownloadMetadata {
+interface ModelDownloadMetadata {
   url: string
   etag: string | null
   totalBytes: number
@@ -91,13 +123,17 @@ export function isWebGpuSupported(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator
 }
 
-export async function isGemmaModelCached(): Promise<boolean> {
+function metadataFileName(config: OnDeviceModelConfig): string {
+  return `${config.fileName}.json`
+}
+
+async function isModelCached(config: OnDeviceModelConfig): Promise<boolean> {
   if ('storage' in navigator && 'getDirectory' in navigator.storage) {
     try {
       const root = await navigator.storage.getDirectory()
-      const metadataHandle = await root.getFileHandle(GEMMA_METADATA_FILE)
-      const metadata = JSON.parse(await (await metadataHandle.getFile()).text()) as GemmaDownloadMetadata
-      const modelHandle = await root.getFileHandle(GEMMA_MODEL_FILE)
+      const metadataHandle = await root.getFileHandle(metadataFileName(config))
+      const metadata = JSON.parse(await (await metadataHandle.getFile()).text()) as ModelDownloadMetadata
+      const modelHandle = await root.getFileHandle(config.fileName)
       const modelFile = await modelHandle.getFile()
       if (metadata.complete && modelFile.size === metadata.totalBytes) return true
     } catch {
@@ -107,7 +143,15 @@ export async function isGemmaModelCached(): Promise<boolean> {
 
   if (!('caches' in globalThis)) return false
   const cache = await caches.open(MODEL_CACHE_NAME)
-  return (await cache.match(GEMMA_MODEL_URL)) !== undefined
+  return (await cache.match(config.url)) !== undefined
+}
+
+export function isGemmaModelCached(): Promise<boolean> {
+  return isModelCached(MODEL_CONFIGS.gemma)
+}
+
+export function isQwenModelCached(): Promise<boolean> {
+  return isModelCached(MODEL_CONFIGS.qwen)
 }
 
 async function removeOpfsEntry(name: string): Promise<void> {
@@ -120,39 +164,51 @@ async function removeOpfsEntry(name: string): Promise<void> {
   }
 }
 
-function formatDownloadStatus(receivedBytes: number, totalBytes: number, resumed: boolean): string {
-  const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100))
-  const receivedGb = (receivedBytes / 1024 ** 3).toFixed(2)
-  const totalGb = (totalBytes / 1024 ** 3).toFixed(2)
-  const prefix = resumed ? 'Gemma 모델 이어받는 중' : 'Gemma 모델 다운로드 중'
-  return `${prefix}... ${pct}% (${receivedGb}/${totalGb}GB)`
+function formatBytes(bytes: number): string {
+  return bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(2)}GB`
+    : `${Math.round(bytes / 1024 ** 2)}MB`
 }
 
-async function getOpfsModelFile(): Promise<File> {
+function formatDownloadStatus(
+  config: OnDeviceModelConfig,
+  receivedBytes: number,
+  totalBytes: number,
+  resumed: boolean,
+): string {
+  const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100))
+  const action = resumed ? '이어받는 중' : '다운로드 중'
+  return `${config.label} 모델 ${action}... ${pct}% (${formatBytes(receivedBytes)}/${formatBytes(totalBytes)})`
+}
+
+async function getOpfsModelFile(config: OnDeviceModelConfig): Promise<File> {
   const root = await navigator.storage.getDirectory()
-  const handle = await root.getFileHandle(GEMMA_MODEL_FILE)
+  const handle = await root.getFileHandle(config.fileName)
   return handle.getFile()
 }
 
-async function getOpfsModelSize(): Promise<number> {
+async function getOpfsModelSize(config: OnDeviceModelConfig): Promise<number> {
   try {
-    return (await getOpfsModelFile()).size
+    return (await getOpfsModelFile(config)).size
   } catch {
     return 0
   }
 }
 
-async function downloadModelToOpfs(hooks?: ChatHooks): Promise<File> {
+async function downloadModelToOpfs(
+  config: OnDeviceModelConfig,
+  hooks?: ChatHooks,
+): Promise<File> {
   if (!('storage' in navigator) || !('getDirectory' in navigator.storage)) {
     throw new Error('이 브라우저는 중단 가능한 모델 저장소를 지원하지 않습니다. 최신 Chrome을 사용해 주세요.')
   }
 
   const estimate = await navigator.storage.estimate()
   const available = (estimate.quota ?? 0) - (estimate.usage ?? 0)
-  const partialSize = await getOpfsModelSize()
-  const minimumRequired = Math.max(0, 2.1 * 1024 ** 3 - partialSize)
+  const partialSize = await getOpfsModelSize(config)
+  const minimumRequired = Math.max(0, config.expectedBytes - partialSize)
   if (estimate.quota && available < minimumRequired) {
-    throw new Error('Gemma 모델을 저장할 공간이 부족합니다. 기기 저장 공간을 확보해 주세요.')
+    throw new Error(`${config.label} 모델을 저장할 공간이 부족합니다. 기기 저장 공간을 확보해 주세요.`)
   }
 
   try {
@@ -170,6 +226,7 @@ async function downloadModelToOpfs(hooks?: ChatHooks): Promise<File> {
       const message = event.data
       if (message.type === 'progress') {
         hooks?.onStatus?.(formatDownloadStatus(
+          config,
           message.receivedBytes,
           message.totalBytes,
           message.resumed,
@@ -183,7 +240,7 @@ async function downloadModelToOpfs(hooks?: ChatHooks): Promise<File> {
         return
       }
 
-      void getOpfsModelFile().then(resolve, reject)
+      void getOpfsModelFile(config).then(resolve, reject)
     })
 
     worker.addEventListener('error', (event) => {
@@ -193,70 +250,89 @@ async function downloadModelToOpfs(hooks?: ChatHooks): Promise<File> {
 
     worker.postMessage({
       type: 'download',
-      url: GEMMA_MODEL_URL,
-      fileName: GEMMA_MODEL_FILE,
-      metadataFileName: GEMMA_METADATA_FILE,
+      url: config.url,
+      fileName: config.fileName,
+      metadataFileName: metadataFileName(config),
     })
   })
 }
 
 /** OPFS에 모델을 내려받아 중단 후에도 이어받고, 디스크 기반 스트림으로 로드한다. */
-async function fetchModelSource(hooks?: ChatHooks): Promise<Blob | ReadableStream<Uint8Array>> {
+async function fetchModelSource(
+  config: OnDeviceModelConfig,
+  hooks?: ChatHooks,
+): Promise<Blob | ReadableStream<Uint8Array>> {
   const cache = 'caches' in globalThis ? await caches.open(MODEL_CACHE_NAME) : null
 
-  const cached = await cache?.match(GEMMA_MODEL_URL)
+  const cached = await cache?.match(config.url)
   if (cached?.body) {
-    hooks?.onStatus?.('캐시된 모델 로드 중...')
+    hooks?.onStatus?.(`캐시된 ${config.label} 모델 로드 중...`)
     return cached.body
   }
 
-  hooks?.onStatus?.('Gemma 모델 다운로드 준비 중... (약 2GB)')
-  return downloadModelToOpfs(hooks)
+  hooks?.onStatus?.(`${config.label} 모델 다운로드 준비 중... (${config.downloadSizeLabel})`)
+  return downloadModelToOpfs(config, hooks)
 }
 
-type GemmaEngine = import('@litert-lm/core').Engine
+type LiteRtEngine = import('@litert-lm/core').Engine
 
-let enginePromise: Promise<GemmaEngine> | null = null
+let activeEngine: { modelId: OnDeviceModelId; promise: Promise<LiteRtEngine> } | null = null
 
-/** 완성본과 이어받기 중인 파일을 모두 지워 다음 사용 시 처음부터 다시 받는다. */
-export async function clearGemmaModel(): Promise<void> {
-  const loadedEngine = enginePromise
-  enginePromise = null
+export async function releaseOnDeviceEngine(): Promise<void> {
+  const loadedEngine = activeEngine
+  activeEngine = null
 
   if (loadedEngine) {
     try {
-      await (await loadedEngine).delete()
+      await (await loadedEngine.promise).delete()
     } catch {
       // 브라우저가 중단한 엔진은 이미 사용할 수 없으므로 저장 파일 정리를 계속한다.
     }
   }
+}
+
+/** 완성본과 이어받기 중인 파일을 모두 지워 다음 사용 시 처음부터 다시 받는다. */
+async function clearModel(config: OnDeviceModelConfig): Promise<void> {
+  if (activeEngine?.modelId === config.id) await releaseOnDeviceEngine()
 
   if ('caches' in globalThis) {
     const cache = await caches.open(MODEL_CACHE_NAME)
-    await cache.delete(GEMMA_MODEL_URL)
+    await cache.delete(config.url)
   }
 
   if ('storage' in navigator && 'getDirectory' in navigator.storage) {
     await Promise.all([
-      removeOpfsEntry(GEMMA_MODEL_FILE),
-      removeOpfsEntry(GEMMA_METADATA_FILE),
+      removeOpfsEntry(config.fileName),
+      removeOpfsEntry(metadataFileName(config)),
     ])
   }
 }
 
+export function clearGemmaModel(): Promise<void> {
+  return clearModel(MODEL_CONFIGS.gemma)
+}
+
+export function clearQwenModel(): Promise<void> {
+  return clearModel(MODEL_CONFIGS.qwen)
+}
+
 /** 엔진은 로드 비용이 커서 모듈 수준 싱글턴으로 유지한다. */
-async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
-  if (!enginePromise) {
-    enginePromise = (async () => {
+async function getEngine(
+  config: OnDeviceModelConfig,
+  hooks?: ChatHooks,
+): Promise<LiteRtEngine> {
+  if (activeEngine?.modelId !== config.id) {
+    await releaseOnDeviceEngine()
+    const promise = (async () => {
       if (!isWebGpuSupported()) {
         throw new Error(
-          '이 브라우저는 WebGPU를 지원하지 않아 온디바이스 Gemma를 실행할 수 없습니다. '
+          `이 브라우저는 WebGPU를 지원하지 않아 온디바이스 ${config.label} 모델을 실행할 수 없습니다. `
           + '최신 Chrome/Edge를 사용하거나 외부 API를 연결해 주세요.',
         )
       }
       hooks?.onStatus?.('LiteRT-LM 실행 환경 불러오는 중...')
       const { Engine, Backend } = await import('@litert-lm/core')
-      const model = await fetchModelSource(hooks)
+      const model = await fetchModelSource(config, hooks)
       hooks?.onStatus?.('GPU 확인 및 모델 컴파일 중... (수 초 소요)')
       return Engine.create({
         model,
@@ -278,18 +354,20 @@ async function getEngine(hooks?: ChatHooks): Promise<GemmaEngine> {
         benchmarkEnabled: false,
       })
     })()
-    enginePromise.catch(() => {
-      enginePromise = null
+    activeEngine = { modelId: config.id, promise }
+    promise.catch(() => {
+      if (activeEngine?.promise === promise) activeEngine = null
     })
   }
-  return enginePromise
+  return activeEngine.promise
 }
 
-export async function createGemmaChat(
+async function createLiteRtChat(
+  config: OnDeviceModelConfig,
   systemPrompt: string,
   hooks?: ChatHooks,
 ): Promise<OnDeviceChatSession> {
-  const engine = await getEngine(hooks)
+  const engine = await getEngine(config, hooks)
   const createConversation = () => engine.createConversation({
     preface: { messages: [{ role: 'system', content: systemPrompt }] },
   })
@@ -335,13 +413,14 @@ export async function createGemmaChat(
         await resetConversation(sendHooks)
       }
 
+      const modelInput = config.noThink ? `${text}\n/no_think` : text
       try {
-        return await generate(text, sendHooks)
+        return await generate(modelInput, sendHooks)
       } catch (error) {
         if (!isContextLimitError(error)) throw error
         await resetConversation(sendHooks)
         try {
-          return await generate(text, sendHooks)
+          return await generate(modelInput, sendHooks)
         } catch (retryError) {
           if (!isContextLimitError(retryError)) throw retryError
           throw new Error('질문이 너무 깁니다. 내용을 짧게 나누어 다시 입력해 주세요.')
@@ -352,4 +431,18 @@ export async function createGemmaChat(
       await conversation.delete()
     },
   }
+}
+
+export function createGemmaChat(
+  systemPrompt: string,
+  hooks?: ChatHooks,
+): Promise<OnDeviceChatSession> {
+  return createLiteRtChat(MODEL_CONFIGS.gemma, systemPrompt, hooks)
+}
+
+export function createQwenChat(
+  systemPrompt: string,
+  hooks?: ChatHooks,
+): Promise<OnDeviceChatSession> {
+  return createLiteRtChat(MODEL_CONFIGS.qwen, systemPrompt, hooks)
 }

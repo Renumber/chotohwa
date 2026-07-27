@@ -16,6 +16,7 @@ const scrollArea = ref<HTMLElement | null>(null)
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   mock: '규칙 기반',
   builtin: 'Gemini Nano (온디바이스)',
+  qwen: 'Qwen3 0.6B (온디바이스)',
   gemma: 'Gemma (온디바이스)',
   openai: 'OpenAI',
   claude: 'Claude',

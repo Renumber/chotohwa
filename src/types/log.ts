@@ -70,7 +70,7 @@ export interface DailyTargets {
   fatG?: number
 }
 
-export type AIProviderType = 'mock' | 'builtin' | 'gemma' | 'openai' | 'claude'
+export type AIProviderType = 'mock' | 'builtin' | 'qwen' | 'gemma' | 'openai' | 'claude'
 
 export interface AppSettings {
   id: 'app'
@@ -82,6 +82,7 @@ export interface AppSettings {
   customPrompt?: string
   bodyWeightKg?: number
   onboarded?: boolean
+  aiProviderDefaultsVersion?: number
 }
 
 export interface MacroTotals {
@@ -154,7 +155,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   id: 'app',
   goal: 'maintain',
   dailyTargets: {},
-  aiProvider: 'gemma',
+  aiProvider: 'qwen',
+  aiProviderDefaultsVersion: 2,
 }
 
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {
