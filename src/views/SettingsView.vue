@@ -60,12 +60,9 @@ const gemmaHint = computed(() => {
 })
 
 const qwenHint = computed(() => {
-  if (!webGpuSupported.value) {
-    return '⚠️ WebGPU 미지원 브라우저 — 온디바이스 Qwen을 사용할 수 없습니다'
-  }
   return qwenCached.value
     ? '✅ 모델 다운로드 완료 (기기에 저장됨)'
-    : 'ℹ️ 최초 사용 시 Qwen3 0.6B INT4 모델(약 500MB)을 다운로드합니다'
+    : 'ℹ️ 최초 사용 시 Qwen3 0.6B INT4 모델(약 350MB)을 다운로드합니다'
 })
 
 onMounted(() => {

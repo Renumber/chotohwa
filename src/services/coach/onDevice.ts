@@ -71,7 +71,7 @@ export async function createBuiltinChat(
 export const GEMMA_MODEL_URL =
   'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm'
 export const QWEN_MODEL_URL =
-  'https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/qwen3_0_6b_mixed_int4.litertlm'
+  'https://huggingface.co/litert-community/Qwen3-0.6B-int4/resolve/main/qwen3_0.6b_nothink_q4_block32_ekv1280.litertlm'
 
 type OnDeviceModelId = 'gemma' | 'qwen'
 
@@ -82,7 +82,10 @@ interface OnDeviceModelConfig {
   fileName: string
   expectedBytes: number
   downloadSizeLabel: string
-  noThink: boolean
+  maxNumTokens: number
+  resetThreshold: number
+  legacyFileNames?: string[]
+  legacyUrls?: string[]
 }
 
 const MODEL_CACHE_NAME = 'ondevice-llm-models'
@@ -94,16 +97,22 @@ const MODEL_CONFIGS: Record<OnDeviceModelId, OnDeviceModelConfig> = {
     fileName: 'gemma-4-E2B-it-web.litertlm',
     expectedBytes: 2.1 * 1024 ** 3,
     downloadSizeLabel: '약 2GB',
-    noThink: false,
+    maxNumTokens: 2048,
+    resetThreshold: 1400,
   },
   qwen: {
     id: 'qwen',
     label: 'Qwen',
     url: QWEN_MODEL_URL,
-    fileName: 'qwen3-0.6b-mixed-int4.litertlm',
-    expectedBytes: 500 * 1024 ** 2,
-    downloadSizeLabel: '약 500MB',
-    noThink: true,
+    fileName: 'qwen3-0.6b-nothink-q4-block32-ekv1280.litertlm',
+    expectedBytes: 350 * 1024 ** 2,
+    downloadSizeLabel: '약 350MB',
+    maxNumTokens: 1280,
+    resetThreshold: 900,
+    legacyFileNames: ['qwen3-0.6b-mixed-int4.litertlm'],
+    legacyUrls: [
+      'https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/qwen3_0_6b_mixed_int4.litertlm',
+    ],
   },
 }
 
@@ -164,6 +173,20 @@ async function removeOpfsEntry(name: string): Promise<void> {
   }
 }
 
+async function removeLegacyModelFiles(config: OnDeviceModelConfig): Promise<void> {
+  if ('storage' in navigator && 'getDirectory' in navigator.storage) {
+    await Promise.all((config.legacyFileNames ?? []).flatMap((fileName) => [
+      removeOpfsEntry(fileName),
+      removeOpfsEntry(`${fileName}.json`),
+    ]))
+  }
+
+  if ('caches' in globalThis && config.legacyUrls?.length) {
+    const cache = await caches.open(MODEL_CACHE_NAME)
+    await Promise.all(config.legacyUrls.map((url) => cache.delete(url)))
+  }
+}
+
 function formatBytes(bytes: number): string {
   return bytes >= 1024 ** 3
     ? `${(bytes / 1024 ** 3).toFixed(2)}GB`
@@ -202,6 +225,8 @@ async function downloadModelToOpfs(
   if (!('storage' in navigator) || !('getDirectory' in navigator.storage)) {
     throw new Error('이 브라우저는 중단 가능한 모델 저장소를 지원하지 않습니다. 최신 Chrome을 사용해 주세요.')
   }
+
+  await removeLegacyModelFiles(config)
 
   const estimate = await navigator.storage.estimate()
   const available = (estimate.quota ?? 0) - (estimate.usage ?? 0)
@@ -306,6 +331,8 @@ async function clearModel(config: OnDeviceModelConfig): Promise<void> {
       removeOpfsEntry(metadataFileName(config)),
     ])
   }
+
+  await removeLegacyModelFiles(config)
 }
 
 export function clearGemmaModel(): Promise<void> {
@@ -324,7 +351,7 @@ async function getEngine(
   if (activeEngine?.modelId !== config.id) {
     await releaseOnDeviceEngine()
     const promise = (async () => {
-      if (!isWebGpuSupported()) {
+      if (config.id === 'gemma' && !isWebGpuSupported()) {
         throw new Error(
           `이 브라우저는 WebGPU를 지원하지 않아 온디바이스 ${config.label} 모델을 실행할 수 없습니다. `
           + '최신 Chrome/Edge를 사용하거나 외부 API를 연결해 주세요.',
@@ -334,13 +361,13 @@ async function getEngine(
       const { Engine, Backend } = await import('@litert-lm/core')
       const model = await fetchModelSource(config, hooks)
       if (config.id === 'qwen') {
-        hooks?.onStatus?.('Qwen 모델 압축 해제 및 GPU 초기화 중... (수 초 소요)')
+        hooks?.onStatus?.('Qwen 모델 압축 해제 및 CPU 초기화 중... (수 초 소요)')
         return Engine.create({
           model,
-          // Qwen의 HF_Tokenizer_Zlib 섹션은 GPU_ARTISAN 스트리밍 로더가 지원하지 않는다.
-          backend: Backend.GPU,
+          // 모바일 WebGPU에서 INT4 출력이 손상되어 CPU용 no-think 모델을 사용한다.
+          backend: Backend.CPU,
           mainExecutorSettings: {
-            maxNumTokens: 2048,
+            maxNumTokens: config.maxNumTokens,
           },
           benchmarkEnabled: false,
         })
@@ -351,7 +378,7 @@ async function getEngine(
         model,
         backend: Backend.GPU_ARTISAN,
         mainExecutorSettings: {
-          maxNumTokens: 2048,
+          maxNumTokens: config.maxNumTokens,
           backendConfig: {
             num_output_candidates: 1,
             wait_for_weight_uploads: true,
@@ -383,6 +410,16 @@ async function createLiteRtChat(
   const engine = await getEngine(config, hooks)
   const createConversation = () => engine.createConversation({
     preface: { messages: [{ role: 'system', content: systemPrompt }] },
+    sessionConfig: config.id === 'qwen'
+      ? {
+          maxOutputTokens: 300,
+          samplerParams: {
+            temperature: 0.8,
+            k: 40,
+            p: 0.9,
+          },
+        }
+      : undefined,
   })
   const isContextLimitError = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
@@ -417,16 +454,39 @@ async function createLiteRtChat(
         }
       }
     }
-    return result || '응답을 받지 못했습니다.'
+
+    if (!result) return '응답을 받지 못했습니다.'
+    if (config.id !== 'qwen') return result
+
+    // 작은 Qwen이 간혹 요청과 무관하게 JSON 래퍼를 붙이므로 본문만 표시한다.
+    const jsonText = result.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
+    try {
+      const parsed = JSON.parse(jsonText) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const values = Object.values(parsed)
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          .map((value) => value.trim())
+        if (values.length) {
+          const normalized = values.join('\n')
+          sendHooks?.onToken?.(normalized)
+          return normalized
+        }
+      }
+    } catch {
+      // 일반 텍스트 응답은 그대로 표시한다.
+    }
+    return result
   }
 
   return {
     async send(text, sendHooks) {
-      if (await conversation.getTokenCount() > 1400) {
+      if (await conversation.getTokenCount() > config.resetThreshold) {
         await resetConversation(sendHooks)
       }
 
-      const modelInput = config.noThink ? `${text}\n/no_think` : text
+      const modelInput = config.id === 'qwen'
+        ? `한국어 코칭 문장으로만 답하세요. JSON과 코드 블록은 쓰지 마세요.\n질문: ${text}`
+        : text
       try {
         return await generate(modelInput, sendHooks)
       } catch (error) {

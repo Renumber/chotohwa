@@ -92,14 +92,17 @@ function buildSystemPrompt(settings: AppSettings, contextMd: string): string {
   ].join('\n')
 }
 
-const ON_DEVICE_SYSTEM_PROMPT_MAX_CHARS = 1400
-
 function compactText(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 1)}…`
 }
 
 /** 모바일의 작은 컨텍스트에서도 동작하도록 기록 원문 대신 핵심 수치만 전달한다. */
-function buildOnDeviceSystemPrompt(settings: AppSettings, ctx: CoachContext): string {
+function buildOnDeviceSystemPrompt(
+  settings: AppSettings,
+  ctx: CoachContext,
+  maxChars: number,
+  includeSettingsProposal = true,
+): string {
   const { summary } = ctx
   const weight = settings.bodyWeightKg ? `${settings.bodyWeightKg}kg` : '미입력'
   const targets = [
@@ -114,11 +117,21 @@ function buildOnDeviceSystemPrompt(settings: AppSettings, ctx: CoachContext): st
 
   const lines = [
     '너는 한국어 개인 헬스 코치다. 기록을 근거로 짧고 실행 가능하게 답하고, 잘한 점 다음에 개선점을 말한다.',
-    '목표·칼로리·단백질 설정 변경을 제안할 때만 답변 끝에 ```settings 형식의 JSON을 넣는다.',
-    '형식: ```settings\n{"goal":"lean_bulk|cut|maintain","calories":2400,"proteinG":140}\n```',
+  ]
+
+  if (includeSettingsProposal) {
+    lines.push(
+      '먼저 질문에 답한 뒤, 설정 변경이 꼭 필요할 때만 답변 끝에 ```settings JSON을 추가한다. JSON만 출력하지 않는다.',
+      '형식: ```settings\n{"goal":"lean_bulk|cut|maintain","calories":2400,"proteinG":140}\n```',
+    )
+  } else {
+    lines.push('질문에 2~4개의 짧은 한국어 문장이나 불릿으로 답한다. JSON, 코드 블록, 영어는 출력하지 않는다.')
+  }
+
+  lines.push(
     `프로필: 목표=${GOAL_LABELS[settings.goal]}, 체중=${weight}, 일일목표=${targets}`,
     `최근 7일 요약: 기록 ${summary.totalDays}일, 운동 ${summary.workoutDays}일, 평균 ${Math.round(summary.avgCalories)}kcal/단백질 ${Math.round(summary.avgProteinG)}g, 유산소 ${summary.totalCardioMin}분`,
-  ]
+  )
 
   if (topExercises) lines.push(`운동 빈도: ${topExercises}`)
   lines.push('최근 기록:')
@@ -139,7 +152,7 @@ function buildOnDeviceSystemPrompt(settings: AppSettings, ctx: CoachContext): st
     }
 
     const line = `- ${day.date}: ${details.join(' | ') || '기록 없음'}`
-    if ([...lines, line].join('\n').length > ON_DEVICE_SYSTEM_PROMPT_MAX_CHARS) break
+    if ([...lines, line].join('\n').length > maxChars) break
     lines.push(line)
   }
 
@@ -205,13 +218,14 @@ export async function createCoachChat(hooks?: ChatHooks): Promise<CoachChatSessi
     }
     case 'gemma': {
       const ctx = await buildCoachContext(7)
-      const systemPrompt = buildOnDeviceSystemPrompt(settings, ctx)
+      const systemPrompt = buildOnDeviceSystemPrompt(settings, ctx, 1400)
       const { createGemmaChat } = await import('./onDevice')
       return createGemmaChat(systemPrompt, hooks)
     }
     case 'qwen': {
       const ctx = await buildCoachContext(7)
-      const systemPrompt = buildOnDeviceSystemPrompt(settings, ctx)
+      // 작은 Qwen이 설정 JSON 지시만 따라 본문을 생략하지 않도록 코칭에만 집중시킨다.
+      const systemPrompt = buildOnDeviceSystemPrompt(settings, ctx, 700, false)
       const { createQwenChat } = await import('./onDevice')
       return createQwenChat(systemPrompt, hooks)
     }
