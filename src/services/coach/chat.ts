@@ -15,6 +15,7 @@ export type { ChatHooks }
 
 export interface CoachChatSession {
   send(text: string, hooks?: ChatHooks): Promise<string>
+  cancel?(): void
   destroy(): Promise<void>
 }
 

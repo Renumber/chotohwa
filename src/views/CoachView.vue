@@ -140,6 +140,14 @@ function sendQuick(prompt: string) {
     <div class="border-t border-gray-200 bg-white p-3 pb-[var(--app-nav-height)]">
       <div class="flex items-end gap-2">
         <button
+          v-if="chatStore.busy"
+          type="button"
+          class="btn-secondary shrink-0 px-3 py-2 text-xs text-red-600"
+          @click="chatStore.cancel()"
+        >
+          중지
+        </button>
+        <button
           v-if="chatStore.messages.length"
           type="button"
           class="btn-secondary shrink-0 px-2.5 py-2 text-xs"

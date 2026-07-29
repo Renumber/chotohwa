@@ -20,16 +20,20 @@ export interface CoachMessage {
 
 // 세션 객체는 직렬화 불가(스토어 밖 모듈 변수로 유지)
 let session: CoachChatSession | null = null
+let activeChat: CoachChatSession | null = null
+let cancelRequested = false
+let activeAbortController: AbortController | null = null
 
 export const useCoachChatStore = defineStore('coachChat', () => {
   const messages = ref<CoachMessage[]>([])
   const busy = ref(false)
   const status = ref('')
 
-  async function ensureSession(): Promise<CoachChatSession> {
+  async function ensureSession(signal: AbortSignal): Promise<CoachChatSession> {
     if (!session) {
       session = await createCoachChat({
         onStatus: (s) => { status.value = s },
+        signal,
       })
     }
     return session
@@ -40,13 +44,18 @@ export const useCoachChatStore = defineStore('coachChat', () => {
     if (!trimmed || busy.value) return
 
     busy.value = true
+    cancelRequested = false
+    const abortController = new AbortController()
+    activeAbortController = abortController
     status.value = '준비 중...'
     messages.value.push({ id: generateId(), role: 'user', content: trimmed })
 
     const assistantMsg: CoachMessage = { id: generateId(), role: 'assistant', content: '' }
 
     try {
-      const chat = await ensureSession()
+      const chat = await ensureSession(abortController.signal)
+      activeChat = chat
+      if (cancelRequested) throw new Error('요청을 중지했습니다.')
       messages.value.push(assistantMsg)
       const current = () => messages.value.find((m) => m.id === assistantMsg.id)
 
@@ -57,7 +66,9 @@ export const useCoachChatStore = defineStore('coachChat', () => {
           if (msg) msg.content = fullText
         },
         onStatus: (s) => { status.value = s },
+        signal: abortController.signal,
       })
+      if (cancelRequested) throw new Error('요청을 중지했습니다.')
 
       const msg = current()
       if (msg) {
@@ -70,6 +81,11 @@ export const useCoachChatStore = defineStore('coachChat', () => {
         }
       }
     } catch (e) {
+      if (activeChat && session === activeChat) {
+        const failedSession = session
+        session = null
+        void failedSession.destroy().catch(() => {})
+      }
       const errText = e instanceof Error ? e.message : '오류가 발생했습니다.'
       const msg = messages.value.find((m) => m.id === assistantMsg.id)
       if (msg) {
@@ -84,9 +100,19 @@ export const useCoachChatStore = defineStore('coachChat', () => {
         })
       }
     } finally {
+      activeChat = null
+      if (activeAbortController === abortController) activeAbortController = null
       busy.value = false
       status.value = ''
     }
+  }
+
+  function cancel() {
+    if (!busy.value || cancelRequested) return
+    cancelRequested = true
+    status.value = '중지 중...'
+    activeAbortController?.abort()
+    activeChat?.cancel?.()
   }
 
   async function applyProposal(messageId: string) {
@@ -108,6 +134,7 @@ export const useCoachChatStore = defineStore('coachChat', () => {
 
   /** 대화와 세션을 초기화한다. 다음 메시지부터 최신 기록으로 컨텍스트를 다시 만든다. */
   async function reset() {
+    activeAbortController?.abort()
     const old = session
     session = null
     messages.value = []
@@ -122,5 +149,5 @@ export const useCoachChatStore = defineStore('coachChat', () => {
     }
   }
 
-  return { messages, busy, status, send, applyProposal, reset }
+  return { messages, busy, status, send, cancel, applyProposal, reset }
 })

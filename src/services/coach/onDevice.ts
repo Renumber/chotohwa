@@ -3,6 +3,7 @@ import type { ChatHooks } from './providers'
 /** 온디바이스 채팅 세션 — 대화 컨텍스트를 세션 내부에 유지한다 */
 export interface OnDeviceChatSession {
   send(text: string, hooks?: ChatHooks): Promise<string>
+  cancel?(): void
   destroy(): Promise<void>
 }
 
@@ -89,6 +90,9 @@ interface OnDeviceModelConfig {
 }
 
 const MODEL_CACHE_NAME = 'ondevice-llm-models'
+const QWEN_INIT_TIMEOUT_MS = 120_000
+const QWEN_GENERATION_TIMEOUT_MS = 90_000
+const QWEN_MAX_OUTPUT_TOKENS = 96
 const MODEL_CONFIGS: Record<OnDeviceModelId, OnDeviceModelConfig> = {
   gemma: {
     id: 'gemma',
@@ -222,6 +226,7 @@ async function downloadModelToOpfs(
   config: OnDeviceModelConfig,
   hooks?: ChatHooks,
 ): Promise<File> {
+  if (hooks?.signal?.aborted) throw new Error('요청을 중지했습니다.')
   if (!('storage' in navigator) || !('getDirectory' in navigator.storage)) {
     throw new Error('이 브라우저는 중단 가능한 모델 저장소를 지원하지 않습니다. 최신 Chrome을 사용해 주세요.')
   }
@@ -246,6 +251,22 @@ async function downloadModelToOpfs(
     const worker = new Worker(new URL('../../workers/modelDownload.worker.ts', import.meta.url), {
       type: 'module',
     })
+    let settled = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      hooks?.signal?.removeEventListener('abort', handleAbort)
+      worker.terminate()
+      callback()
+    }
+    const handleAbort = () => {
+      finish(() => reject(new Error('요청을 중지했습니다.')))
+    }
+    hooks?.signal?.addEventListener('abort', handleAbort, { once: true })
+    if (hooks?.signal?.aborted) {
+      handleAbort()
+      return
+    }
 
     worker.addEventListener('message', (event: MessageEvent<ModelDownloadWorkerResponse>) => {
       const message = event.data
@@ -259,18 +280,19 @@ async function downloadModelToOpfs(
         return
       }
 
-      worker.terminate()
       if (message.type === 'error') {
-        reject(new Error(message.message))
+        finish(() => reject(new Error(message.message)))
         return
       }
 
-      void getOpfsModelFile(config).then(resolve, reject)
+      void getOpfsModelFile(config).then(
+        (file) => finish(() => resolve(file)),
+        (error) => finish(() => reject(error)),
+      )
     })
 
     worker.addEventListener('error', (event) => {
-      worker.terminate()
-      reject(new Error(event.message || '모델 다운로드 작업이 중단되었습니다.'))
+      finish(() => reject(new Error(event.message || '모델 다운로드 작업이 중단되었습니다.')))
     })
 
     worker.postMessage({
@@ -351,7 +373,7 @@ async function getEngine(
   if (activeEngine?.modelId !== config.id) {
     await releaseOnDeviceEngine()
     const promise = (async () => {
-      if (config.id === 'gemma' && !isWebGpuSupported()) {
+      if (!isWebGpuSupported()) {
         throw new Error(
           `이 브라우저는 WebGPU를 지원하지 않아 온디바이스 ${config.label} 모델을 실행할 수 없습니다. `
           + '최신 Chrome/Edge를 사용하거나 외부 API를 연결해 주세요.',
@@ -360,18 +382,6 @@ async function getEngine(
       hooks?.onStatus?.('LiteRT-LM 실행 환경 불러오는 중...')
       const { Engine, Backend } = await import('@litert-lm/core')
       const model = await fetchModelSource(config, hooks)
-      if (config.id === 'qwen') {
-        hooks?.onStatus?.('Qwen 모델 압축 해제 및 CPU 초기화 중... (수 초 소요)')
-        return Engine.create({
-          model,
-          // 모바일 WebGPU에서 INT4 출력이 손상되어 CPU용 no-think 모델을 사용한다.
-          backend: Backend.CPU,
-          mainExecutorSettings: {
-            maxNumTokens: config.maxNumTokens,
-          },
-          benchmarkEnabled: false,
-        })
-      }
 
       hooks?.onStatus?.('GPU 확인 및 모델 컴파일 중... (수 초 소요)')
       return Engine.create({
@@ -410,16 +420,6 @@ async function createLiteRtChat(
   const engine = await getEngine(config, hooks)
   const createConversation = () => engine.createConversation({
     preface: { messages: [{ role: 'system', content: systemPrompt }] },
-    sessionConfig: config.id === 'qwen'
-      ? {
-          maxOutputTokens: 300,
-          samplerParams: {
-            temperature: 0.8,
-            k: 40,
-            p: 0.9,
-          },
-        }
-      : undefined,
   })
   const isContextLimitError = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
@@ -443,38 +443,22 @@ async function createLiteRtChat(
   async function generate(text: string, sendHooks?: ChatHooks): Promise<string> {
     let result = ''
     const stream = conversation.sendMessageStreaming(text)
-    for await (const chunk of stream) {
-      const parts = typeof chunk.content === 'string'
-        ? [{ type: 'text' as const, text: chunk.content }]
-        : chunk.content ?? []
-      for (const part of parts) {
-        if (part.type === 'text') {
-          result += part.text
-          sendHooks?.onToken?.(result)
+    const generation = (async () => {
+      for await (const chunk of stream) {
+        const parts = typeof chunk.content === 'string'
+          ? [{ type: 'text' as const, text: chunk.content }]
+          : chunk.content ?? []
+        for (const part of parts) {
+          if (part.type === 'text') {
+            result += part.text
+            sendHooks?.onToken?.(result)
+          }
         }
       }
-    }
+    })()
+    await generation
 
     if (!result) return '응답을 받지 못했습니다.'
-    if (config.id !== 'qwen') return result
-
-    // 작은 Qwen이 간혹 요청과 무관하게 JSON 래퍼를 붙이므로 본문만 표시한다.
-    const jsonText = result.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
-    try {
-      const parsed = JSON.parse(jsonText) as unknown
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const values = Object.values(parsed)
-          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-          .map((value) => value.trim())
-        if (values.length) {
-          const normalized = values.join('\n')
-          sendHooks?.onToken?.(normalized)
-          return normalized
-        }
-      }
-    } catch {
-      // 일반 텍스트 응답은 그대로 표시한다.
-    }
     return result
   }
 
@@ -484,24 +468,195 @@ async function createLiteRtChat(
         await resetConversation(sendHooks)
       }
 
-      const modelInput = config.id === 'qwen'
-        ? `한국어 코칭 문장으로만 답하세요. JSON과 코드 블록은 쓰지 마세요.\n질문: ${text}`
-        : text
+      const handleAbort = () => conversation.cancel()
+      sendHooks?.signal?.addEventListener('abort', handleAbort, { once: true })
       try {
-        return await generate(modelInput, sendHooks)
+        return await generate(text, sendHooks)
       } catch (error) {
         if (!isContextLimitError(error)) throw error
         await resetConversation(sendHooks)
         try {
-          return await generate(modelInput, sendHooks)
+          return await generate(text, sendHooks)
         } catch (retryError) {
           if (!isContextLimitError(retryError)) throw retryError
           throw new Error('질문이 너무 깁니다. 내용을 짧게 나누어 다시 입력해 주세요.')
         }
+      } finally {
+        sendHooks?.signal?.removeEventListener('abort', handleAbort)
       }
+    },
+    cancel() {
+      conversation.cancel()
     },
     async destroy() {
       await conversation.delete()
+    },
+  }
+}
+
+type QwenWorkerResponse =
+  | { type: 'ready' }
+  | { type: 'token'; requestId: number; text: string }
+  | { type: 'complete'; requestId: number; text: string }
+  | { type: 'error'; requestId?: number; message: string }
+
+function normalizeQwenOutput(result: string): string {
+  const jsonText = result.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
+  try {
+    const parsed = JSON.parse(jsonText) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const values = Object.values(parsed)
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim())
+      if (values.length) return values.join('\n')
+    }
+  } catch {
+    // 일반 텍스트 응답은 그대로 표시한다.
+  }
+  return result
+}
+
+/** CPU 연산이 모바일 화면을 멈추지 않도록 Qwen 전체 추론을 별도 워커에서 실행한다. */
+async function createQwenWorkerChat(
+  systemPrompt: string,
+  hooks?: ChatHooks,
+): Promise<OnDeviceChatSession> {
+  const config = MODEL_CONFIGS.qwen
+  hooks?.onStatus?.(`${config.label} 모델 다운로드 준비 중... (${config.downloadSizeLabel})`)
+  const model = await downloadModelToOpfs(config, hooks)
+  if (hooks?.signal?.aborted) throw new Error('요청을 중지했습니다.')
+
+  hooks?.onStatus?.('Qwen CPU 초기화 중... (휴대폰에서는 최대 2분)')
+  const worker = new Worker(new URL('../../workers/qwenInference.worker.ts', import.meta.url), {
+    // LiteRT WASM 로더가 워커 내부에서 importScripts를 사용하므로 classic이 필요하다.
+    type: 'classic',
+  })
+  let terminated = false
+  let requestId = 0
+  let pending: {
+    id: number
+    resolve: (text: string) => void
+    reject: (error: Error) => void
+    hooks?: ChatHooks
+    timeoutId: ReturnType<typeof setTimeout>
+    handleAbort?: () => void
+  } | null = null
+
+  const stopWorker = (error?: Error) => {
+    if (!terminated) {
+      terminated = true
+      worker.terminate()
+    }
+    if (pending) {
+      clearTimeout(pending.timeoutId)
+      if (pending.handleAbort) {
+        pending.hooks?.signal?.removeEventListener('abort', pending.handleAbort)
+      }
+      const reject = pending.reject
+      pending = null
+      if (error) reject(error)
+    }
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      hooks?.signal?.removeEventListener('abort', handleAbort)
+      callback()
+    }
+    const handleAbort = () => {
+      stopWorker()
+      finish(() => reject(new Error('요청을 중지했습니다.')))
+    }
+    const timeoutId = setTimeout(() => {
+      stopWorker()
+      finish(() => reject(new Error(
+        'Qwen 초기화가 오래 걸려 중지했습니다. 다른 앱을 닫고 브라우저를 다시 실행해 주세요.',
+      )))
+    }, QWEN_INIT_TIMEOUT_MS)
+
+    worker.addEventListener('message', (event: MessageEvent<QwenWorkerResponse>) => {
+      const message = event.data
+      if (message.type === 'ready') finish(resolve)
+      if (message.type === 'error' && message.requestId === undefined) {
+        stopWorker()
+        finish(() => reject(new Error(message.message)))
+      }
+    })
+    worker.addEventListener('error', (event) => {
+      const error = new Error(event.message || 'Qwen 초기화에 실패했습니다.')
+      stopWorker(error)
+      finish(() => reject(error))
+    })
+    hooks?.signal?.addEventListener('abort', handleAbort, { once: true })
+    if (hooks?.signal?.aborted) {
+      handleAbort()
+      return
+    }
+    worker.postMessage({
+      type: 'init',
+      model,
+      systemPrompt,
+      maxNumTokens: config.maxNumTokens,
+      resetThreshold: config.resetThreshold,
+      maxOutputTokens: QWEN_MAX_OUTPUT_TOKENS,
+    })
+  })
+
+  worker.addEventListener('message', (event: MessageEvent<QwenWorkerResponse>) => {
+    const message = event.data
+    if (!pending || !('requestId' in message) || message.requestId !== pending.id) return
+    if (message.type === 'token') {
+      pending.hooks?.onToken?.(message.text)
+      return
+    }
+
+    clearTimeout(pending.timeoutId)
+    if (pending.handleAbort) {
+      pending.hooks?.signal?.removeEventListener('abort', pending.handleAbort)
+    }
+    const current = pending
+    pending = null
+    if (message.type === 'error') {
+      stopWorker()
+      current.reject(new Error(message.message))
+      return
+    }
+    const normalized = normalizeQwenOutput(message.text)
+    current.hooks?.onToken?.(normalized)
+    current.resolve(normalized)
+  })
+
+  return {
+    send(text, sendHooks) {
+      if (terminated) return Promise.reject(new Error('Qwen 세션이 종료되었습니다. 다시 시도해 주세요.'))
+      if (pending) return Promise.reject(new Error('이전 응답이 아직 생성 중입니다.'))
+      sendHooks?.onStatus?.('Qwen 응답 생성 중... (최대 90초)')
+      const id = ++requestId
+      const modelInput = `한국어 코칭 문장으로만 답하세요. JSON과 코드 블록은 쓰지 마세요.\n질문: ${text}`
+
+      return new Promise<string>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          stopWorker(new Error('응답 생성이 오래 걸려 중지했습니다. 질문을 짧게 바꿔 다시 시도해 주세요.'))
+        }, QWEN_GENERATION_TIMEOUT_MS)
+        const handleAbort = () => stopWorker(new Error('요청을 중지했습니다.'))
+        pending = { id, resolve, reject, hooks: sendHooks, timeoutId, handleAbort }
+        sendHooks?.signal?.addEventListener('abort', handleAbort, { once: true })
+        if (sendHooks?.signal?.aborted) {
+          handleAbort()
+          return
+        }
+        worker.postMessage({ type: 'generate', requestId: id, text: modelInput })
+      })
+    },
+    cancel() {
+      stopWorker(new Error('요청을 중지했습니다.'))
+    },
+    async destroy() {
+      stopWorker()
     },
   }
 }
@@ -517,5 +672,5 @@ export function createQwenChat(
   systemPrompt: string,
   hooks?: ChatHooks,
 ): Promise<OnDeviceChatSession> {
-  return createLiteRtChat(MODEL_CONFIGS.qwen, systemPrompt, hooks)
+  return createQwenWorkerChat(systemPrompt, hooks)
 }

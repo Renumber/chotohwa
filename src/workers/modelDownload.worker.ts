@@ -37,9 +37,32 @@ interface SyncFileHandle extends FileSystemFileHandle {
 const workerScope = self as unknown as WorkerScope
 const FLUSH_INTERVAL_BYTES = 16 * 1024 * 1024
 const PROGRESS_INTERVAL_BYTES = 4 * 1024 * 1024
+const REQUEST_TIMEOUT_MS = 30_000
+const DOWNLOAD_STALL_TIMEOUT_MS = 45_000
 
 function post(message: DownloadResponse) {
   workerScope.postMessage(message)
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  onTimeout?: () => void,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      onTimeout?.()
+      reject(new Error(message))
+    }, timeoutMs)
+  })
+
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+  }
 }
 
 async function readMetadata(
@@ -77,7 +100,13 @@ async function download({ url, fileName, metadataFileName }: DownloadRequest): P
   const accessHandle = await (fileHandle as SyncFileHandle).createSyncAccessHandle()
 
   try {
-    const head = await fetch(url, { method: 'HEAD', cache: 'no-store' })
+    const headController = new AbortController()
+    const head = await withTimeout(
+      fetch(url, { method: 'HEAD', cache: 'no-store', signal: headController.signal }),
+      REQUEST_TIMEOUT_MS,
+      '모델 서버 응답이 없어 중지했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+      () => headController.abort(),
+    )
     if (!head.ok) throw new Error(`모델 정보 확인 실패: ${head.status}`)
 
     const totalBytes = Number(head.headers.get('Content-Length')) || 0
@@ -104,10 +133,17 @@ async function download({ url, fileName, metadataFileName }: DownloadRequest): P
     const resumed = receivedBytes > 0
     post({ type: 'progress', receivedBytes, totalBytes, resumed })
 
-    const response = await fetch(url, {
-      cache: 'no-store',
-      headers: receivedBytes > 0 ? { Range: `bytes=${receivedBytes}-` } : undefined,
-    })
+    const downloadController = new AbortController()
+    const response = await withTimeout(
+      fetch(url, {
+        cache: 'no-store',
+        headers: receivedBytes > 0 ? { Range: `bytes=${receivedBytes}-` } : undefined,
+        signal: downloadController.signal,
+      }),
+      REQUEST_TIMEOUT_MS,
+      '모델 다운로드를 시작하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.',
+      () => downloadController.abort(),
+    )
 
     if (!response.ok || !response.body) {
       throw new Error(`모델 다운로드 실패: ${response.status}`)
@@ -135,7 +171,12 @@ async function download({ url, fileName, metadataFileName }: DownloadRequest): P
     let bytesSinceProgress = 0
 
     for (;;) {
-      const { done, value } = await reader.read()
+      const { done, value } = await withTimeout(
+        reader.read(),
+        DOWNLOAD_STALL_TIMEOUT_MS,
+        '모델 다운로드가 멈춰 중지했습니다. 다시 시도하면 이어서 받습니다.',
+        () => downloadController.abort(),
+      )
       if (done) break
       if (!value) continue
 

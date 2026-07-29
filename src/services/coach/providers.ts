@@ -5,6 +5,7 @@ import { GOAL_LABELS } from '@/types/log'
 export interface ChatHooks {
   onToken?: (fullText: string) => void
   onStatus?: (status: string) => void
+  signal?: AbortSignal
 }
 
 export interface ChatMessage {
