@@ -147,7 +147,7 @@ onBeforeUnmount(() => {
     <Transition name="injector-screen">
       <div
         v-if="open"
-        class="fixed inset-0 z-[100] overflow-hidden bg-[#f8f3ff] text-gray-900"
+        class="injector-screen fixed inset-0 z-[100] overflow-hidden text-gray-900"
         role="dialog"
         aria-modal="true"
         aria-label="가상 스테로이드 체험"
@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
               </span>
               <span class="injector-neck" />
               <span class="injector-body">
-                <span class="injector-label">VIRTUAL</span>
+                <span class="injector-label">STEROID</span>
                 <span class="injector-window">
                   <span class="injector-liquid" />
                   <span class="injector-bubbles">•<br />•</span>
@@ -249,6 +249,15 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.injector-screen {
+  color-scheme: light;
+  background:
+    radial-gradient(circle at 50% 54%, rgb(196 181 253 / 0.48), transparent 36%),
+    linear-gradient(180deg, #fcfaff 0%, #f4edff 100%);
+  forced-color-adjust: none;
+  isolation: isolate;
+}
+
 .injector-screen-enter-active,
 .injector-screen-leave-active {
   transition: opacity 180ms ease, transform 220ms ease;
@@ -273,7 +282,9 @@ onBeforeUnmount(() => {
   min-height: 330px;
   flex-direction: column;
   align-items: center;
-  filter: drop-shadow(0 22px 22px rgb(76 29 149 / 0.16));
+  filter:
+    drop-shadow(0 0 2px rgb(76 29 149 / 0.75))
+    drop-shadow(0 22px 22px rgb(76 29 149 / 0.28));
   transform: translateY(calc(var(--progress) * 10px));
   transition: transform 120ms ease;
 }
@@ -316,8 +327,8 @@ onBeforeUnmount(() => {
   width: 52px;
   height: 20px;
   flex: 0 0 20px;
-  border-inline: 1px solid #d4d4d8;
-  background: linear-gradient(90deg, #d4d4d8, #fafafa 35%, #e4e4e7);
+  border-inline: 2px solid #8b5cf6;
+  background: linear-gradient(90deg, #c4b5fd, #fff 35%, #ddd6fe);
 }
 
 .injector-body {
@@ -325,21 +336,25 @@ onBeforeUnmount(() => {
   width: 94px;
   min-height: 210px;
   flex: 1;
-  border: 1px solid #d4d4d8;
+  border: 2px solid #8b5cf6;
   border-radius: 18px 18px 25px 25px;
-  background: linear-gradient(90deg, #e4e4e7 0%, #fff 32%, #f4f4f5 70%, #d4d4d8 100%);
-  box-shadow: inset 8px 0 12px rgb(255 255 255 / 0.8), inset -8px 0 12px rgb(161 161 170 / 0.16);
+  background: linear-gradient(90deg, #ddd6fe 0%, #fff 32%, #faf5ff 70%, #c4b5fd 100%);
+  box-shadow:
+    0 0 0 4px rgb(255 255 255 / 0.72),
+    0 12px 32px rgb(76 29 149 / 0.26),
+    inset 8px 0 12px rgb(255 255 255 / 0.9),
+    inset -8px 0 12px rgb(109 40 217 / 0.14);
 }
 
 .injector-label {
   position: absolute;
   left: 50%;
   top: 26px;
-  padding: 5px 8px;
+  padding: 5px 7px;
   border-radius: 8px;
   background: #6d28d9;
   color: white;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.08em;
   transform: translateX(-50%);
@@ -349,10 +364,13 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 80px 16px 23px;
   overflow: hidden;
-  border: 3px solid #d4d4d8;
+  border: 3px solid #7c3aed;
   border-radius: 12px;
   background: #ddd6fe;
-  box-shadow: inset 0 3px 10px rgb(76 29 149 / 0.16);
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 0.8),
+    0 0 18px rgb(124 58 237 / 0.34),
+    inset 0 3px 10px rgb(76 29 149 / 0.2);
 }
 
 .injector-liquid {
@@ -379,16 +397,17 @@ onBeforeUnmount(() => {
   width: 40px;
   height: 22px;
   flex: 0 0 22px;
-  border: 1px solid #d4d4d8;
+  border: 2px solid #8b5cf6;
   border-radius: 0 0 18px 18px;
-  background: linear-gradient(90deg, #d4d4d8, white 45%, #e4e4e7);
+  background: linear-gradient(90deg, #c4b5fd, white 45%, #ddd6fe);
 }
 
 .injector-needle {
-  width: 2px;
+  width: 3px;
   height: 18px;
   flex: 0 0 18px;
-  background: linear-gradient(90deg, #9ca3af, #f3f4f6);
+  background: linear-gradient(90deg, #4c1d95, #c4b5fd);
+  box-shadow: 0 0 5px rgb(76 29 149 / 0.75);
 }
 
 .is-charging .injector {
