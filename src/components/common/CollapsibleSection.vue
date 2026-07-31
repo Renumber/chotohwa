@@ -11,7 +11,7 @@ defineProps<{
   <section class="card overflow-hidden">
     <button
       type="button"
-      class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-gray-100/60"
+      class="flex w-full items-center justify-between rounded-xl px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-inset"
       :aria-expanded="open"
       @click="open = !open"
     >
