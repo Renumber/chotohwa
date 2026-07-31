@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import Modal from '@/components/common/Modal.vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatDateKey } from '@/utils/helpers'
 
 type InjectionPhase = 'idle' | 'charging' | 'complete'
@@ -109,134 +108,344 @@ function closeInjection() {
   open.value = false
 }
 
+watch(open, (isOpen) => {
+  document.body.style.overflow = isOpen ? 'hidden' : ''
+})
+
 onMounted(loadStats)
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(animationFrame)
+  document.body.style.overflow = ''
 })
 </script>
 
 <template>
-  <section class="overflow-hidden rounded-2xl bg-gradient-to-br from-gray-950 via-emerald-950 to-gray-900 text-white shadow-lg">
+  <section class="card overflow-hidden">
     <button
       type="button"
-      class="flex w-full items-center gap-3 p-4 text-left active:scale-[0.99]"
+      class="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-gray-50 active:bg-gray-100"
       @click="showInjection"
     >
-      <span class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white/10 text-2xl ring-1 ring-white/15">
+      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-violet-100 text-xl">
         💉
       </span>
       <span class="min-w-0 flex-1">
         <span class="flex items-center gap-2">
-          <span class="font-bold">가상 스테로이드</span>
-          <span class="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
-            100% 가상
+          <span class="font-medium text-gray-800">가상 스테로이드</span>
+          <span class="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-600">
+            재미 기능
           </span>
         </span>
-        <span class="mt-0.5 block text-xs text-gray-300">{{ cardStatus }}</span>
+        <span class="mt-0.5 block text-xs text-gray-500">{{ cardStatus }}</span>
       </span>
-      <span class="text-lg text-emerald-300" aria-hidden="true">›</span>
+      <span class="text-lg text-gray-300" aria-hidden="true">›</span>
     </button>
   </section>
 
-  <Modal :open="open" title="가상 스테로이드" @close="closeInjection">
-    <div class="relative overflow-hidden rounded-2xl bg-gray-950 p-5 text-center text-white">
+  <Teleport to="body">
+    <Transition name="injector-screen">
       <div
-        v-if="phase === 'complete'"
-        class="pointer-events-none absolute inset-0 overflow-hidden"
-        aria-hidden="true"
-      >
-        <i v-for="n in 14" :key="n" class="booster-confetti" :style="{ '--i': n }" />
-      </div>
-
-      <p class="text-xs font-bold tracking-[0.24em] text-emerald-400">VIRTUAL BOOSTER</p>
-
-      <div
-        class="relative mx-auto mt-5 grid h-32 w-32 place-items-center rounded-full border border-emerald-400/30 bg-emerald-400/10"
-        :class="{ 'booster-pulse': phase === 'charging', 'booster-complete': phase === 'complete' }"
+        v-if="open"
+        class="fixed inset-0 z-[100] overflow-hidden bg-[#f8f3ff] text-gray-900"
+        role="dialog"
+        aria-modal="true"
+        aria-label="가상 스테로이드 체험"
       >
         <div
-          class="absolute inset-2 rounded-full"
-          :style="{ background: `conic-gradient(#34d399 ${progress * 3.6}deg, rgb(255 255 255 / 0.08) 0deg)` }"
-        />
-        <div class="relative grid h-24 w-24 place-items-center rounded-full bg-gray-950 text-5xl">
-          {{ phase === 'complete' ? '⚡' : '💉' }}
+          v-if="phase === 'complete'"
+          class="pointer-events-none absolute inset-0 overflow-hidden"
+          aria-hidden="true"
+        >
+          <i v-for="n in 18" :key="n" class="booster-confetti" :style="{ '--i': n }" />
         </div>
+
+        <button
+          type="button"
+          class="absolute right-4 z-10 grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl text-gray-500 shadow-sm"
+          :style="{ top: 'calc(1rem + env(safe-area-inset-top))' }"
+          aria-label="닫기"
+          @click="closeInjection"
+        >
+          ×
+        </button>
+
+        <main
+          class="mx-auto flex h-dvh w-full max-w-lg flex-col items-center px-6 text-center"
+          :style="{
+            paddingTop: 'calc(4.5rem + env(safe-area-inset-top))',
+            paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))',
+          }"
+        >
+          <div class="shrink-0">
+            <p class="text-[11px] font-bold tracking-[0.24em] text-violet-500">VIRTUAL BOOSTER</p>
+            <h2 class="mt-3 text-xl font-black">
+              {{ phase === 'complete' ? '가상 부스터 주입 완료!' : '휴대폰을 팔에 꾹 눌러주세요' }}
+            </h2>
+            <p class="mt-1.5 text-sm text-gray-500">
+              {{ phase === 'complete'
+                ? '의지 +100 장착. 이제 진짜 운동하러 갈 시간!'
+                : '휴대폰 아래쪽을 팔에 대고 보라색 버튼을 길게 누르세요' }}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="injector-touch-zone relative my-4 flex min-h-0 flex-1 touch-none select-none items-center justify-center"
+            :class="{ 'is-charging': phase === 'charging', 'is-complete': phase === 'complete' }"
+            :style="{ '--progress': progress / 100 }"
+            :aria-label="buttonLabel"
+            @pointerdown.prevent="startHold"
+            @pointerup.prevent="cancelHold"
+            @pointercancel="cancelHold"
+            @contextmenu.prevent
+            @keydown.space.prevent="startHold"
+            @keyup.space.prevent="cancelHold"
+          >
+            <span class="injector">
+              <span class="injector-plunger">
+                <span class="injector-plunger-shine" />
+                <span class="injector-press-dot" />
+              </span>
+              <span class="injector-neck" />
+              <span class="injector-body">
+                <span class="injector-label">VIRTUAL</span>
+                <span class="injector-window">
+                  <span class="injector-liquid" />
+                  <span class="injector-bubbles">•<br />•</span>
+                </span>
+              </span>
+              <span class="injector-tip" />
+              <span class="injector-needle" />
+            </span>
+
+            <span v-if="phase === 'charging'" class="absolute bottom-3 text-sm font-bold text-violet-600">
+              {{ Math.round(progress) }}% · 그대로 누르세요
+            </span>
+            <span v-else-if="phase === 'complete'" class="absolute bottom-3 text-lg font-black text-violet-600">
+              ⚡ 의지 +100
+            </span>
+            <span v-else class="absolute bottom-3 text-sm font-semibold text-gray-500">
+              주사 펜을 길게 누르기
+            </span>
+          </button>
+
+          <div class="w-full shrink-0">
+            <div class="h-1.5 overflow-hidden rounded-full bg-violet-100">
+              <div
+                class="h-full rounded-full bg-violet-500 transition-[width] duration-75"
+                :style="{ width: `${progress}%` }"
+              />
+            </div>
+            <p class="mt-3 text-[10px] leading-relaxed text-gray-400">
+              총 {{ totalCount }}회 체험 · 화면과 진동만 사용하는 장난 기능이며 신체 변화나 의학적 효과가 없습니다.
+              실제 약물 사용을 권장하지 않습니다.
+            </p>
+          </div>
+        </main>
       </div>
-
-      <template v-if="phase === 'complete'">
-        <h3 class="mt-5 text-2xl font-black text-emerald-300">의지 +100</h3>
-        <p class="mt-1 text-sm text-gray-300">가상 부스터 장착 완료. 이제 진짜 운동하러 가세요!</p>
-      </template>
-      <template v-else>
-        <h3 class="mt-5 text-lg font-bold">휴대폰을 팔에 대세요</h3>
-        <p class="mt-1 text-sm text-gray-400">아래 버튼을 끝까지 길게 누르면 진동과 함께 주입됩니다.</p>
-      </template>
-
-      <button
-        type="button"
-        class="mt-5 w-full touch-none select-none rounded-xl bg-emerald-500 px-4 py-3.5 font-bold text-gray-950 transition-transform active:scale-[0.98]"
-        :class="{ 'bg-emerald-300': phase === 'complete' }"
-        @pointerdown.prevent="startHold"
-        @pointerup.prevent="cancelHold"
-        @pointercancel="cancelHold"
-        @contextmenu.prevent
-        @keydown.space.prevent="startHold"
-        @keyup.space.prevent="cancelHold"
-      >
-        {{ buttonLabel }}
-      </button>
-
-      <p class="mt-3 text-[11px] leading-relaxed text-gray-500">
-        총 {{ totalCount }}회 체험 · 재미를 위한 시각·진동 연출이며 신체 변화나 의학적 효과가 없습니다.
-        실제 아나볼릭 스테로이드 사용을 권장하지 않습니다.
-      </p>
-    </div>
-  </Modal>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
-.booster-pulse {
-  animation: booster-pulse 0.55s ease-in-out infinite alternate;
+.injector-screen-enter-active,
+.injector-screen-leave-active {
+  transition: opacity 180ms ease, transform 220ms ease;
 }
 
-.booster-complete {
-  box-shadow: 0 0 45px rgb(52 211 153 / 0.45);
+.injector-screen-enter-from,
+.injector-screen-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.injector-touch-zone {
+  width: min(100%, 280px);
+  outline: none;
+}
+
+.injector {
+  position: relative;
+  display: flex;
+  width: 124px;
+  height: min(52dvh, 430px);
+  min-height: 330px;
+  flex-direction: column;
+  align-items: center;
+  filter: drop-shadow(0 22px 22px rgb(76 29 149 / 0.16));
+  transform: translateY(calc(var(--progress) * 10px));
+  transition: transform 120ms ease;
+}
+
+.injector-plunger {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  width: 86px;
+  height: 70px;
+  flex: 0 0 70px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgb(91 33 182 / 0.28);
+  border-radius: 24px 24px 17px 17px;
+  background: linear-gradient(145deg, #9b5cff 0%, #6d28d9 52%, #4c1d95 100%);
+  box-shadow: inset -10px -10px 20px rgb(46 16 101 / 0.22), 0 8px 14px rgb(76 29 149 / 0.22);
+  transform: translateY(calc(var(--progress) * 7px));
+  transition: transform 100ms linear;
+}
+
+.injector-plunger-shine {
+  position: absolute;
+  inset: 8px auto 8px 12px;
+  width: 10px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.28);
+}
+
+.injector-press-dot {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgb(255 255 255 / 0.25);
+  border-radius: 999px;
+  background: rgb(49 18 106 / 0.22);
+  box-shadow: inset 0 2px 8px rgb(26 5 62 / 0.35);
+}
+
+.injector-neck {
+  width: 52px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-inline: 1px solid #d4d4d8;
+  background: linear-gradient(90deg, #d4d4d8, #fafafa 35%, #e4e4e7);
+}
+
+.injector-body {
+  position: relative;
+  width: 94px;
+  min-height: 210px;
+  flex: 1;
+  border: 1px solid #d4d4d8;
+  border-radius: 18px 18px 25px 25px;
+  background: linear-gradient(90deg, #e4e4e7 0%, #fff 32%, #f4f4f5 70%, #d4d4d8 100%);
+  box-shadow: inset 8px 0 12px rgb(255 255 255 / 0.8), inset -8px 0 12px rgb(161 161 170 / 0.16);
+}
+
+.injector-label {
+  position: absolute;
+  left: 50%;
+  top: 26px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #6d28d9;
+  color: white;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  transform: translateX(-50%);
+}
+
+.injector-window {
+  position: absolute;
+  inset: 80px 16px 23px;
+  overflow: hidden;
+  border: 3px solid #d4d4d8;
+  border-radius: 12px;
+  background: #ddd6fe;
+  box-shadow: inset 0 3px 10px rgb(76 29 149 / 0.16);
+}
+
+.injector-liquid {
+  position: absolute;
+  inset: 0;
+  transform-origin: bottom;
+  transform: scaleY(calc(1 - var(--progress)));
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 0.5), transparent 38%),
+    linear-gradient(180deg, #a78bfa, #7c3aed);
+  transition: transform 80ms linear;
+}
+
+.injector-bubbles {
+  position: absolute;
+  right: 8px;
+  bottom: 14px;
+  color: rgb(255 255 255 / 0.55);
+  font-size: 12px;
+  line-height: 36px;
+}
+
+.injector-tip {
+  width: 40px;
+  height: 22px;
+  flex: 0 0 22px;
+  border: 1px solid #d4d4d8;
+  border-radius: 0 0 18px 18px;
+  background: linear-gradient(90deg, #d4d4d8, white 45%, #e4e4e7);
+}
+
+.injector-needle {
+  width: 2px;
+  height: 18px;
+  flex: 0 0 18px;
+  background: linear-gradient(90deg, #9ca3af, #f3f4f6);
+}
+
+.is-charging .injector {
+  animation: injector-hum 90ms linear infinite alternate;
+}
+
+.is-charging .injector-plunger {
+  box-shadow: 0 0 28px rgb(124 58 237 / 0.55);
+}
+
+.is-complete .injector {
+  filter: drop-shadow(0 0 28px rgb(139 92 246 / 0.5));
 }
 
 .booster-confetti {
-  --angle: calc(var(--i) * 25.7deg);
+  --angle: calc(var(--i) * 20deg);
   position: absolute;
+  z-index: 5;
   left: 50%;
-  top: 46%;
-  width: 6px;
-  height: 12px;
+  top: 52%;
+  width: 7px;
+  height: 14px;
   border-radius: 999px;
-  background: hsl(calc(var(--i) * 43deg) 85% 62%);
+  background: hsl(calc(var(--i) * 37deg) 85% 62%);
   animation: booster-confetti 900ms ease-out both;
-  transform: rotate(var(--angle)) translateY(-20px);
 }
 
-@keyframes booster-pulse {
-  from { transform: scale(0.98); }
-  to { transform: scale(1.03); }
+@keyframes injector-hum {
+  from { margin-left: -1px; }
+  to { margin-left: 1px; }
 }
 
 @keyframes booster-confetti {
   from {
     opacity: 1;
-    transform: rotate(var(--angle)) translateY(-20px) scale(1);
+    transform: rotate(var(--angle)) translateY(-25px) scale(1);
   }
   to {
     opacity: 0;
-    transform: rotate(var(--angle)) translateY(-150px) scale(0.7);
+    transform: rotate(var(--angle)) translateY(-220px) scale(0.7);
+  }
+}
+
+@media (max-height: 690px) {
+  .injector {
+    height: 330px;
+    min-height: 300px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .booster-pulse,
+  .injector-screen-enter-active,
+  .injector-screen-leave-active,
+  .is-charging .injector,
   .booster-confetti {
     animation: none;
+    transition: none;
   }
 }
 </style>
