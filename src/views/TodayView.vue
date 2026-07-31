@@ -11,6 +11,7 @@ import CategoryComparisonCard from '@/components/workout/CategoryComparisonCard.
 import CardioForm from '@/components/cardio/CardioForm.vue'
 import MealGroupedList from '@/components/meal/MealGroupedList.vue'
 import MacroSummary from '@/components/meal/MacroSummary.vue'
+import VirtualSteroidCard from '@/components/fun/VirtualSteroidCard.vue'
 import { useDayLog } from '@/composables/useDayLog'
 import { useSettingsStore } from '@/stores/settings'
 import { getTodayCategoryComparisons, type CategoryComparison } from '@/services/insights/workoutStats'
@@ -120,6 +121,8 @@ function removeMeal(index: number) {
     <div v-if="loading" class="p-8 text-center text-gray-400">불러오는 중...</div>
 
     <div v-else class="space-y-4 p-4 pb-[calc(var(--app-nav-height)+1rem)]">
+      <VirtualSteroidCard />
+
       <CollapsibleSection
         v-model:open="openSections.workout"
         title="💪 운동"
