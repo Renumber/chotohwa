@@ -27,6 +27,7 @@ const providerLabel = computed(
 )
 
 const QUICK_PROMPTS = [
+  '점심에 닭가슴살 200g과 밥 한 공기 먹었어',
   '최근 7일 기록 분석해줘',
   '내 목표에 맞는 플랜 세워줘',
   '이번 주 플랜 잘 지켰는지 리뷰해줘',
@@ -121,6 +122,23 @@ function sendQuick(prompt: string) {
                 </button>
                 <p v-else class="mt-1.5 text-xs font-medium text-primary-700">✅ 적용됨</p>
               </div>
+
+              <div
+                v-if="msg.mealLog"
+                class="mt-2 rounded-lg border border-primary-100 bg-primary-50 p-2.5"
+              >
+                <p v-if="msg.mealLogUndone" class="text-xs font-medium text-gray-500">
+                  ↩️ 식사 기록 추가를 취소했어요
+                </p>
+                <button
+                  v-else
+                  type="button"
+                  class="w-full text-xs font-medium text-primary-700"
+                  @click="chatStore.undoMealLog(msg.id)"
+                >
+                  추가 취소
+                </button>
+              </div>
             </div>
           </div>
         </template>
@@ -160,7 +178,7 @@ function sendQuick(prompt: string) {
         <textarea
           v-model="input"
           rows="1"
-          placeholder="질문하거나 분석을 요청해 보세요"
+          placeholder="질문하거나 먹은 음식을 기록해 보세요"
           class="input max-h-28 flex-1 resize-none"
           @keydown.enter.exact.prevent="submit"
         />

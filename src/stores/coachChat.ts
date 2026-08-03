@@ -7,7 +7,10 @@ import {
   type SettingsProposal,
 } from '@/services/coach'
 import { useSettingsStore } from '@/stores/settings'
-import { generateId } from '@/utils/helpers'
+import { getDayLog, saveDayLog } from '@/db'
+import { formatDateKey, generateId } from '@/utils/helpers'
+import { parseMealCommand } from '@/services/coach/mealCommand'
+import { MEAL_TYPE_LABELS, type MealEntry } from '@/types/log'
 
 export interface CoachMessage {
   id: string
@@ -15,6 +18,8 @@ export interface CoachMessage {
   content: string
   proposal?: SettingsProposal
   proposalApplied?: boolean
+  mealLog?: { date: string; entries: MealEntry[] }
+  mealLogUndone?: boolean
   isError?: boolean
 }
 
@@ -42,6 +47,53 @@ export const useCoachChatStore = defineStore('coachChat', () => {
   async function send(text: string) {
     const trimmed = text.trim()
     if (!trimmed || busy.value) return
+
+    const mealCommand = parseMealCommand(trimmed)
+    if (mealCommand) {
+      busy.value = true
+      messages.value.push({ id: generateId(), role: 'user', content: trimmed })
+      try {
+        if (mealCommand.entries.length === 0) {
+          messages.value.push({
+            id: generateId(),
+            role: 'assistant',
+            content: '음식과 수량을 함께 적어주세요. 예: **점심에 닭가슴살 200g과 밥 한 공기 먹었어.**',
+          })
+          return
+        }
+
+        const date = formatDateKey(new Date())
+        const log = await getDayLog(date)
+        log.meals.push(...mealCommand.entries)
+        await saveDayLog(log)
+
+        const lines = mealCommand.entries.map((entry) => {
+          const nutrition = entry.calories > 0 ? ` · ${entry.calories}kcal` : ' · 영양 정보 미입력'
+          return `- ${entry.name}${nutrition}`
+        })
+        messages.value.push({
+          id: generateId(),
+          role: 'assistant',
+          content: `**오늘 ${MEAL_TYPE_LABELS[mealCommand.mealType]} 식사에 추가했어요.**\n\n${lines.join('\n')}`,
+          mealLog: { date, entries: mealCommand.entries },
+        })
+
+        const old = session
+        session = null
+        if (old) void old.destroy().catch(() => {})
+      } catch (e) {
+        messages.value.push({
+          id: generateId(),
+          role: 'assistant',
+          content: e instanceof Error ? e.message : '식사 기록을 저장하지 못했습니다.',
+          isError: true,
+        })
+      } finally {
+        busy.value = false
+        status.value = ''
+      }
+      return
+    }
 
     busy.value = true
     cancelRequested = false
@@ -132,6 +184,21 @@ export const useCoachChatStore = defineStore('coachChat', () => {
     msg.proposalApplied = true
   }
 
+  async function undoMealLog(messageId: string) {
+    const msg = messages.value.find((m) => m.id === messageId)
+    if (!msg?.mealLog || msg.mealLogUndone) return
+
+    const entryIds = new Set(msg.mealLog.entries.map((entry) => entry.id))
+    const log = await getDayLog(msg.mealLog.date)
+    log.meals = log.meals.filter((entry) => !entryIds.has(entry.id))
+    await saveDayLog(log)
+    msg.mealLogUndone = true
+
+    const old = session
+    session = null
+    if (old) void old.destroy().catch(() => {})
+  }
+
   /** 대화와 세션을 초기화한다. 다음 메시지부터 최신 기록으로 컨텍스트를 다시 만든다. */
   async function reset() {
     activeAbortController?.abort()
@@ -149,5 +216,5 @@ export const useCoachChatStore = defineStore('coachChat', () => {
     }
   }
 
-  return { messages, busy, status, send, cancel, applyProposal, reset }
+  return { messages, busy, status, send, cancel, applyProposal, undoMealLog, reset }
 })
