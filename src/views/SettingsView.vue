@@ -10,6 +10,7 @@ import {
   clearQwenModel,
   getBuiltinAvailability,
   isGemmaModelCached,
+  isMobileBrowser,
   isQwenModelCached,
   isWebGpuSupported,
   releaseOnDeviceEngine,
@@ -50,7 +51,12 @@ const builtinHint = computed(() => {
   }
 })
 
+const mobileBrowser = isMobileBrowser()
+
 const gemmaHint = computed(() => {
+  if (mobileBrowser) {
+    return '⚠️ 휴대폰 브라우저에서는 Gemma(약 2GB, WebGPU)를 실행할 수 없습니다. Qwen2.5를 선택하세요.'
+  }
   if (!webGpuSupported.value) {
     return '⚠️ WebGPU 미지원 브라우저 — 온디바이스 Gemma를 사용할 수 없습니다'
   }
@@ -61,8 +67,8 @@ const gemmaHint = computed(() => {
 
 const qwenHint = computed(() => {
   return qwenCached.value
-    ? '✅ 모델 다운로드 완료 (기기에 저장됨)'
-    : 'ℹ️ 최초 사용 시 Qwen3 0.6B INT4 모델(약 350MB)을 다운로드합니다'
+    ? '✅ 모델이 기기에 저장되어 있습니다. WebGPU 없이 CPU로 실행합니다.'
+    : 'ℹ️ 최초 1회 Qwen2.5 0.5B(약 410MB)를 받습니다. 갤럭시 S22 브라우저에서도 WebGPU 없이 동작합니다. Wi-Fi를 권장합니다.'
 })
 
 onMounted(() => {
@@ -307,7 +313,7 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
         >
           <option value="mock">규칙 기반</option>
           <option value="builtin">브라우저 내장 AI — Gemini Nano (온디바이스)</option>
-          <option value="qwen">Qwen3 0.6B INT4 (온디바이스, 기본)</option>
+          <option value="qwen">Qwen2.5 0.5B (온디바이스, 휴대폰 브라우저)</option>
           <option value="gemma">Gemma 4 E2B (온디바이스, WebGPU)</option>
           <option value="openai">OpenAI (외부 API)</option>
           <option value="claude">Claude (외부 API)</option>
@@ -332,7 +338,7 @@ function updateApiKey(field: 'openaiApiKey' | 'claudeApiKey', value: string) {
         </p>
         <div
           v-if="settingsStore.settings.aiProvider === 'gemma' || settingsStore.settings.aiProvider === 'qwen'"
-          class="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2"
+          class="flex items-center justify-between gap-3 rounded-lg bg-gray-100 px-3 py-2"
         >
           <p class="text-xs text-gray-500">
             문제가 생기면 모델을 지운 뒤 처음부터 다시 받을 수 있습니다.

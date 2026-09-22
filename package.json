@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@litert-lm/core": "^0.14.0",
+    "@wllama/wllama": "^3.6.1",
+    "@wllama/wllama-compat": "^3.6.1",
     "date-fns": "^4.1.0",
     "dexie": "^4.0.11",
     "dompurify": "^3.4.11",

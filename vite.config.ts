@@ -40,12 +40,27 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        runtimeCaching: [
+          {
+            urlPattern: /wllama.*\.wasm$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'wllama-wasm',
+              expiration: { maxEntries: 2 },
+            },
+          },
+        ],
       },
     }),
   ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // 패키지 main이 비어 있어 ESM 엔트리를 직접 가리킨다.
+      '@wllama/wllama': fileURLToPath(new URL('./node_modules/@wllama/wllama/esm/index.js', import.meta.url)),
     },
+  },
+  optimizeDeps: {
+    exclude: ['@wllama/wllama'],
   },
 })

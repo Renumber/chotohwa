@@ -72,7 +72,7 @@ export async function createBuiltinChat(
 export const GEMMA_MODEL_URL =
   'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm'
 export const QWEN_MODEL_URL =
-  'https://huggingface.co/litert-community/Qwen3-0.6B-int4/resolve/main/qwen3_0.6b_nothink_q4_block32_ekv1280.litertlm'
+  'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf'
 
 type OnDeviceModelId = 'gemma' | 'qwen'
 
@@ -90,9 +90,7 @@ interface OnDeviceModelConfig {
 }
 
 const MODEL_CACHE_NAME = 'ondevice-llm-models'
-const QWEN_INIT_TIMEOUT_MS = 120_000
-const QWEN_GENERATION_TIMEOUT_MS = 90_000
-const QWEN_MAX_OUTPUT_TOKENS = 96
+let qwenRuntimeUsed = false
 const MODEL_CONFIGS: Record<OnDeviceModelId, OnDeviceModelConfig> = {
   gemma: {
     id: 'gemma',
@@ -108,13 +106,17 @@ const MODEL_CONFIGS: Record<OnDeviceModelId, OnDeviceModelConfig> = {
     id: 'qwen',
     label: 'Qwen',
     url: QWEN_MODEL_URL,
-    fileName: 'qwen3-0.6b-nothink-q4-block32-ekv1280.litertlm',
-    expectedBytes: 350 * 1024 ** 2,
-    downloadSizeLabel: '약 350MB',
-    maxNumTokens: 1280,
+    fileName: 'qwen2.5-0.5b-instruct-q4_0.gguf',
+    expectedBytes: 428_730_208,
+    downloadSizeLabel: '약 410MB',
+    maxNumTokens: 1536,
     resetThreshold: 900,
-    legacyFileNames: ['qwen3-0.6b-mixed-int4.litertlm'],
+    legacyFileNames: [
+      'qwen3-0.6b-nothink-q4-block32-ekv1280.litertlm',
+      'qwen3-0.6b-mixed-int4.litertlm',
+    ],
     legacyUrls: [
+      'https://huggingface.co/litert-community/Qwen3-0.6B-int4/resolve/main/qwen3_0.6b_nothink_q4_block32_ekv1280.litertlm',
       'https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/qwen3_0_6b_mixed_int4.litertlm',
     ],
   },
@@ -134,6 +136,11 @@ type ModelDownloadWorkerResponse =
 
 export function isWebGpuSupported(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator
+}
+
+export function isMobileBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 }
 
 function metadataFileName(config: OnDeviceModelConfig): string {
@@ -163,8 +170,9 @@ export function isGemmaModelCached(): Promise<boolean> {
   return isModelCached(MODEL_CONFIGS.gemma)
 }
 
-export function isQwenModelCached(): Promise<boolean> {
-  return isModelCached(MODEL_CONFIGS.qwen)
+export async function isQwenModelCached(): Promise<boolean> {
+  const { isQwenCached } = await import('./qwenRuntime')
+  return isQwenCached()
 }
 
 async function removeOpfsEntry(name: string): Promise<void> {
@@ -328,6 +336,9 @@ let activeEngine: { modelId: OnDeviceModelId; promise: Promise<LiteRtEngine> } |
 export async function releaseOnDeviceEngine(): Promise<void> {
   const loadedEngine = activeEngine
   activeEngine = null
+  const releaseQwen = qwenRuntimeUsed
+    ? import('./qwenRuntime').then((runtime) => runtime.releaseQwenRuntime())
+    : Promise.resolve()
 
   if (loadedEngine) {
     try {
@@ -336,6 +347,7 @@ export async function releaseOnDeviceEngine(): Promise<void> {
       // 브라우저가 중단한 엔진은 이미 사용할 수 없으므로 저장 파일 정리를 계속한다.
     }
   }
+  await releaseQwen
 }
 
 /** 완성본과 이어받기 중인 파일을 모두 지워 다음 사용 시 처음부터 다시 받는다. */
@@ -361,8 +373,10 @@ export function clearGemmaModel(): Promise<void> {
   return clearModel(MODEL_CONFIGS.gemma)
 }
 
-export function clearQwenModel(): Promise<void> {
-  return clearModel(MODEL_CONFIGS.qwen)
+export async function clearQwenModel(): Promise<void> {
+  await clearModel(MODEL_CONFIGS.qwen)
+  const { clearQwenCache } = await import('./qwenRuntime')
+  await clearQwenCache()
 }
 
 /** 엔진은 로드 비용이 커서 모듈 수준 싱글턴으로 유지한다. */
@@ -373,6 +387,12 @@ async function getEngine(
   if (activeEngine?.modelId !== config.id) {
     await releaseOnDeviceEngine()
     const promise = (async () => {
+      if (isMobileBrowser()) {
+        throw new Error(
+          '이 휴대폰 브라우저에서는 Gemma(약 2GB, WebGPU)를 실행할 수 없습니다. '
+          + '설정에서 Qwen2.5를 선택해 주세요.',
+        )
+      }
       if (!isWebGpuSupported()) {
         throw new Error(
           `이 브라우저는 WebGPU를 지원하지 않아 온디바이스 ${config.label} 모델을 실행할 수 없습니다. `
@@ -494,173 +514,6 @@ async function createLiteRtChat(
   }
 }
 
-type QwenWorkerResponse =
-  | { type: 'ready' }
-  | { type: 'token'; requestId: number; text: string }
-  | { type: 'complete'; requestId: number; text: string }
-  | { type: 'error'; requestId?: number; message: string }
-
-function normalizeQwenOutput(result: string): string {
-  const jsonText = result.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
-  try {
-    const parsed = JSON.parse(jsonText) as unknown
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const values = Object.values(parsed)
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-        .map((value) => value.trim())
-      if (values.length) return values.join('\n')
-    }
-  } catch {
-    // 일반 텍스트 응답은 그대로 표시한다.
-  }
-  return result
-}
-
-/** CPU 연산이 모바일 화면을 멈추지 않도록 Qwen 전체 추론을 별도 워커에서 실행한다. */
-async function createQwenWorkerChat(
-  systemPrompt: string,
-  hooks?: ChatHooks,
-): Promise<OnDeviceChatSession> {
-  const config = MODEL_CONFIGS.qwen
-  hooks?.onStatus?.(`${config.label} 모델 다운로드 준비 중... (${config.downloadSizeLabel})`)
-  const model = await downloadModelToOpfs(config, hooks)
-  if (hooks?.signal?.aborted) throw new Error('요청을 중지했습니다.')
-
-  hooks?.onStatus?.('Qwen CPU 초기화 중... (휴대폰에서는 최대 2분)')
-  const worker = new Worker(new URL('../../workers/qwenInference.worker.ts', import.meta.url), {
-    // LiteRT WASM 로더가 워커 내부에서 importScripts를 사용하므로 classic이 필요하다.
-    type: 'classic',
-  })
-  let terminated = false
-  let requestId = 0
-  let pending: {
-    id: number
-    resolve: (text: string) => void
-    reject: (error: Error) => void
-    hooks?: ChatHooks
-    timeoutId: ReturnType<typeof setTimeout>
-    handleAbort?: () => void
-  } | null = null
-
-  const stopWorker = (error?: Error) => {
-    if (!terminated) {
-      terminated = true
-      worker.terminate()
-    }
-    if (pending) {
-      clearTimeout(pending.timeoutId)
-      if (pending.handleAbort) {
-        pending.hooks?.signal?.removeEventListener('abort', pending.handleAbort)
-      }
-      const reject = pending.reject
-      pending = null
-      if (error) reject(error)
-    }
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-    const finish = (callback: () => void) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeoutId)
-      hooks?.signal?.removeEventListener('abort', handleAbort)
-      callback()
-    }
-    const handleAbort = () => {
-      stopWorker()
-      finish(() => reject(new Error('요청을 중지했습니다.')))
-    }
-    const timeoutId = setTimeout(() => {
-      stopWorker()
-      finish(() => reject(new Error(
-        'Qwen 초기화가 오래 걸려 중지했습니다. 다른 앱을 닫고 브라우저를 다시 실행해 주세요.',
-      )))
-    }, QWEN_INIT_TIMEOUT_MS)
-
-    worker.addEventListener('message', (event: MessageEvent<QwenWorkerResponse>) => {
-      const message = event.data
-      if (message.type === 'ready') finish(resolve)
-      if (message.type === 'error' && message.requestId === undefined) {
-        stopWorker()
-        finish(() => reject(new Error(message.message)))
-      }
-    })
-    worker.addEventListener('error', (event) => {
-      const error = new Error(event.message || 'Qwen 초기화에 실패했습니다.')
-      stopWorker(error)
-      finish(() => reject(error))
-    })
-    hooks?.signal?.addEventListener('abort', handleAbort, { once: true })
-    if (hooks?.signal?.aborted) {
-      handleAbort()
-      return
-    }
-    worker.postMessage({
-      type: 'init',
-      model,
-      systemPrompt,
-      maxNumTokens: config.maxNumTokens,
-      resetThreshold: config.resetThreshold,
-      maxOutputTokens: QWEN_MAX_OUTPUT_TOKENS,
-    })
-  })
-
-  worker.addEventListener('message', (event: MessageEvent<QwenWorkerResponse>) => {
-    const message = event.data
-    if (!pending || !('requestId' in message) || message.requestId !== pending.id) return
-    if (message.type === 'token') {
-      pending.hooks?.onToken?.(message.text)
-      return
-    }
-
-    clearTimeout(pending.timeoutId)
-    if (pending.handleAbort) {
-      pending.hooks?.signal?.removeEventListener('abort', pending.handleAbort)
-    }
-    const current = pending
-    pending = null
-    if (message.type === 'error') {
-      stopWorker()
-      current.reject(new Error(message.message))
-      return
-    }
-    const normalized = normalizeQwenOutput(message.text)
-    current.hooks?.onToken?.(normalized)
-    current.resolve(normalized)
-  })
-
-  return {
-    send(text, sendHooks) {
-      if (terminated) return Promise.reject(new Error('Qwen 세션이 종료되었습니다. 다시 시도해 주세요.'))
-      if (pending) return Promise.reject(new Error('이전 응답이 아직 생성 중입니다.'))
-      sendHooks?.onStatus?.('Qwen 응답 생성 중... (최대 90초)')
-      const id = ++requestId
-      const modelInput = `한국어 코칭 문장으로만 답하세요. JSON과 코드 블록은 쓰지 마세요.\n질문: ${text}`
-
-      return new Promise<string>((resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-          stopWorker(new Error('응답 생성이 오래 걸려 중지했습니다. 질문을 짧게 바꿔 다시 시도해 주세요.'))
-        }, QWEN_GENERATION_TIMEOUT_MS)
-        const handleAbort = () => stopWorker(new Error('요청을 중지했습니다.'))
-        pending = { id, resolve, reject, hooks: sendHooks, timeoutId, handleAbort }
-        sendHooks?.signal?.addEventListener('abort', handleAbort, { once: true })
-        if (sendHooks?.signal?.aborted) {
-          handleAbort()
-          return
-        }
-        worker.postMessage({ type: 'generate', requestId: id, text: modelInput })
-      })
-    },
-    cancel() {
-      stopWorker(new Error('요청을 중지했습니다.'))
-    },
-    async destroy() {
-      stopWorker()
-    },
-  }
-}
-
 export function createGemmaChat(
   systemPrompt: string,
   hooks?: ChatHooks,
@@ -672,5 +525,6 @@ export function createQwenChat(
   systemPrompt: string,
   hooks?: ChatHooks,
 ): Promise<OnDeviceChatSession> {
-  return createQwenWorkerChat(systemPrompt, hooks)
+  qwenRuntimeUsed = true
+  return import('./qwenRuntime').then((runtime) => runtime.createQwenSession(systemPrompt, hooks))
 }
