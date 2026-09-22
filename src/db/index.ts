@@ -93,28 +93,8 @@ export async function getDatesWithLogs(): Promise<string[]> {
     .map((log) => log.date)
 }
 
-export async function findRecentWorkoutSets(
-  exerciseId: string,
-  beforeDate: string,
-  limit = 1,
-): Promise<{ date: string; sets: { weightKg: number; reps: number }[] }[]> {
-  const logs = await db.dayLogs
-    .where('date')
-    .below(beforeDate)
-    .reverse()
-    .toArray()
-
-  const results: { date: string; sets: { weightKg: number; reps: number }[] }[] = []
-
-  for (const log of logs) {
-    const workout = log.workouts.find((w) => w.exerciseId === exerciseId)
-    if (workout && workout.sets.length > 0) {
-      results.push({ date: log.date, sets: workout.sets })
-      if (results.length >= limit) break
-    }
-  }
-
-  return results
+export async function getDayLogsBefore(beforeDate: string): Promise<DayLog[]> {
+  return db.dayLogs.where('date').below(beforeDate).reverse().toArray()
 }
 
 export interface RecentMeal {

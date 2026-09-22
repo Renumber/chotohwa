@@ -1,4 +1,4 @@
-import { getCustomExercises, getDayLogsInRange } from '@/db'
+import { getCustomExercises, getDayLogsBefore, getDayLogsInRange } from '@/db'
 import {
   CATEGORY_LABELS,
   type CustomExercise,
@@ -34,6 +34,49 @@ export function formatSetLabel(set: WorkoutSet): string {
   return `${set.weightKg}kg×${set.reps}`
 }
 
+export interface PersonalBestSet {
+  date: string
+  set: WorkoutSet
+}
+
+function isBetterSet(candidate: WorkoutSet, current: WorkoutSet): boolean {
+  if (candidate.weightKg !== current.weightKg) return candidate.weightKg > current.weightKg
+  return candidate.reps > current.reps
+}
+
+/** 해당 날짜 이전 기록 중 최고 세트. 무게 우선, 같으면 횟수. 동률이면 더 최근 날짜. */
+export async function findPersonalBestSets(
+  exerciseIds: string[],
+  beforeDate: string,
+): Promise<Map<string, PersonalBestSet>> {
+  const ids = new Set(exerciseIds)
+  const best = new Map<string, PersonalBestSet>()
+  if (ids.size === 0) return best
+
+  const logs = await getDayLogsBefore(beforeDate)
+  for (const log of logs) {
+    for (const workout of log.workouts) {
+      if (!ids.has(workout.exerciseId)) continue
+      const set = getHeaviestSet(workout.sets)
+      if (!set) continue
+      const current = best.get(workout.exerciseId)
+      if (!current || isBetterSet(set, current.set)) {
+        best.set(workout.exerciseId, { date: log.date, set })
+      }
+    }
+  }
+
+  return best
+}
+
+export async function findPersonalBestSet(
+  exerciseId: string,
+  beforeDate: string,
+): Promise<PersonalBestSet | null> {
+  const best = await findPersonalBestSets([exerciseId], beforeDate)
+  return best.get(exerciseId) ?? null
+}
+
 export interface HeaviestSetComparison {
   current: WorkoutSet
   last: WorkoutSet | null
@@ -64,7 +107,8 @@ export interface ExerciseComparison {
   exerciseId: string
   exerciseName: string
   currentHeaviest: WorkoutSet
-  lastHeaviest: WorkoutSet | null
+  recordSet: WorkoutSet | null
+  recordDateLabel: string | null
   weightDelta: number | null
   repsDelta: number | null
   currentVolume: number
@@ -136,10 +180,16 @@ export async function compareCategorySession(
   const volumeDeltaPercent =
     lastVolume > 0 ? Math.round((volumeDelta / lastVolume) * 100) : null
 
+  const bestByExercise = await findPersonalBestSets(
+    todayWorkouts.map((w) => w.exerciseId),
+    currentDate,
+  )
+
   const exerciseComparisons: ExerciseComparison[] = todayWorkouts
     .map((current) => {
       const lastExercise = last?.workouts.find((w) => w.exerciseId === current.exerciseId)
-      const heaviest = compareHeaviestSets(current.sets, lastExercise?.sets)
+      const record = bestByExercise.get(current.exerciseId) ?? null
+      const heaviest = compareHeaviestSets(current.sets, record ? [record.set] : null)
       if (!heaviest) return null
       const currentVol = calcVolume(current.sets)
       const lastVol = lastExercise ? calcVolume(lastExercise.sets) : null
@@ -148,7 +198,10 @@ export async function compareCategorySession(
         exerciseId: current.exerciseId,
         exerciseName: current.exerciseName,
         currentHeaviest: heaviest.current,
-        lastHeaviest: heaviest.last,
+        recordSet: heaviest.last,
+        recordDateLabel: record
+          ? format(new Date(record.date), 'M/d', { locale: ko })
+          : null,
         weightDelta: heaviest.weightDelta,
         repsDelta: heaviest.repsDelta,
         currentVolume: currentVol,

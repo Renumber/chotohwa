@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
+import { format } from 'date-fns'
 import type { WorkoutEntry } from '@/types/log'
-import { findRecentWorkoutSets } from '@/db'
-import { getHeaviestSet, formatSetLabel } from '@/services/insights/workoutStats'
+import { findPersonalBestSet, getHeaviestSet, formatSetLabel } from '@/services/insights/workoutStats'
 
 const props = defineProps<{
   workout: WorkoutEntry
@@ -18,25 +18,19 @@ const emit = defineEmits<{
   moveDown: []
 }>()
 
-const lastSets = ref<{ date: string; sets: { weightKg: number; reps: number }[] } | null>(null)
+const personalBest = ref<{ dateLabel: string; set: { weightKg: number; reps: number } } | null>(null)
 
-async function loadLast() {
-  const recent = await findRecentWorkoutSets(props.workout.exerciseId, props.date, 1)
-  lastSets.value = recent[0] ?? null
+async function loadBest() {
+  const best = await findPersonalBestSet(props.workout.exerciseId, props.date)
+  personalBest.value = best
+    ? { dateLabel: format(new Date(best.date), 'M/d'), set: best.set }
+    : null
 }
 
-watch(() => [props.workout.exerciseId, props.workout.sets] as const, loadLast, { immediate: true, deep: true })
-
-const previousHint = computed(() => {
-  if (!lastSets.value) return null
-  return {
-    dateLabel: lastSets.value.date,
-    lastSetsText: lastSets.value.sets.map((s) => `${s.weightKg}kg×${s.reps}`).join(', '),
-  }
-})
+watch(() => [props.workout.exerciseId, props.date] as const, loadBest, { immediate: true })
 
 const firstRecordSet = computed(() => {
-  if (lastSets.value || props.workout.sets.length === 0) return null
+  if (personalBest.value || props.workout.sets.length === 0) return null
   return getHeaviestSet(props.workout.sets)
 })
 
@@ -96,8 +90,8 @@ function addInitialSet() {
           <p v-if="firstRecordSet" class="mt-1 text-xs text-gray-500">
             (첫기록) <span class="font-medium text-gray-800">{{ formatSetLabel(firstRecordSet) }}</span>
           </p>
-          <p v-else-if="previousHint" class="mt-1 text-xs text-gray-400">
-            이전({{ previousHint.dateLabel }}): {{ previousHint.lastSetsText }}
+          <p v-else-if="personalBest" class="mt-1 text-xs text-gray-400">
+            최고({{ personalBest.dateLabel }}): {{ formatSetLabel(personalBest.set) }}
           </p>
         </div>
       </div>
